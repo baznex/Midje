@@ -36,43 +36,33 @@
         =not=> :check-negated-match
         =deny=> :check-negated-match} (name arrow)))
 
-(defn clj-under-test
-  "the file being tested
-   this is a terrible kluge, is there a better way?"
-  []
-  (let [classname
-        (try (throw (Exception. ""))
-             (catch Exception e
-               (.getClassName
-                (nth (.getStackTrace e) 3))))]
-    (format
-     "test/%s.clj"
-     (str/replace
-      (str/replace classname #"\$.*" "")
-      #"\." "/"))))
+(defn ^:private cljs-file->ns
+  "given the cljs file name produce the cljs ns"
+  [cljs-file]
+  (symbol (str/replace
+           (str/replace
+            (str/replace
+             cljs-file
+             #"\.cljs" "")
+            #"_" "-")
+           #"/" ".")))
 
-(defn cljs-ns-meta
+(defn ^:private cljs-ns-meta
   "extract the metadata from the ns form"
-  [filename]
-  (let [{cljs-file :cljs-file} (-> filename slurp read-string second meta)]
+  []
+  (let [{cljs-file :cljs-file} (-> (format "test/%s" *file*)
+                                   slurp read-string second meta)]
     (if cljs-file
-      [(symbol (str/replace
-                (str/replace
-                 (str/replace
-                  cljs-file
-                  #"\.cljs" "")
-                 #"_" "-")
-                #"/" "."))
-       cljs-file]
+      [(cljs-file->ns cljs-file) cljs-file]
       nil)))
 
-(defn process-call-form
+(defmacro process-call-form
   "helper for unprocessed check"
   [call-form]
-  (if-let [[cljs-ns cljs-file] (cljs-ns-meta (clj-under-test))]
-    (do
-      (cljs/load-cljs cljs-file) ; TODO: run only once for ns-- how?
-      (cljs/cljs-eval call-form cljs-ns))
+  (if-let [[cljs-ns cljs-file] (cljs-ns-meta)]
+    `(do
+       (cljs/load-cljs ~cljs-file) ; TODO: run only once for ns-- how?
+       (cljs/cljs-eval '~call-form '~cljs-ns))
     call-form))
 
 (defmacro unprocessed-check

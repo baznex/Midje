@@ -2,4 +2,4 @@
   midje.cljs.t-basic
   (:use [midje.sweet]))
 
-(fact '(doubler 5) => 10)
+(fact (doubler 5) => 10)
