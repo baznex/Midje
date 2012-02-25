@@ -37,7 +37,7 @@
         =not=> :check-negated-match
         =deny=> :check-negated-match} (name arrow)))
 
-(defn ^:private cljs-file->ns
+(defn ^{:private true} cljs-file->ns
   "given the cljs file name produce the cljs ns"
   [cljs-file]
   (-> cljs-file
@@ -46,7 +46,7 @@
       (str/replace #"/" ".")
       symbol))
 
-(defn ^:private cljs-ns-meta
+(defn ^{:private true} cljs-ns-meta
   "extract the metadata from the ns form"
   []
   (let [first-form (read-string (slurp (format "test/%s" *file*)))
