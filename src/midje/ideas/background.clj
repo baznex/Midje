@@ -57,7 +57,7 @@
 
   (defmacro around 
     "Code to run around a given wrapping target (:facts, :contents, :checks).
-  Use the symbol '?form' tp denote the code that is being wrapped around.
+  Use the symbol '?form' to denote the code that is being wrapped around.
      
   Ex.
   (around :contents (let [a 999] 
@@ -73,7 +73,7 @@
     (and (bindings '?first-form)
          (or (not (bindings '?after)) (bindings '?second-form)))))
 
-(defn- #^:tested-private extract-state-descriptions+fakes [forms]
+(defn- ^{:testable true } extract-state-descriptions+fakes [forms]
   (loop [expanded []
          in-progress forms]
     (pred-cond in-progress
@@ -94,7 +94,7 @@
       (recur (conj expanded (first in-progress))
         (rest in-progress)))))
 
-(defn- #^:tested-private state-wrapper [[_before-after-or-around_ wrapping-target & _  :as state-description]]
+(defn- ^{:testable true } state-wrapper [[_before-after-or-around_ wrapping-target & _  :as state-description]]
   (with-wrapping-target
     (macroexpand-1 (map-first #(symbol "midje.ideas.background" (name %)) state-description))
     wrapping-target))

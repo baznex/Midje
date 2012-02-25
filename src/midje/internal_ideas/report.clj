@@ -8,9 +8,7 @@
         [midje.util.form-utils :only [pred-cond]])
   (:require [midje.util.colorize :as color]))
 
-(let [^clojure.lang.Var the-var (intern (the-ns 'clojure.test) 'old-report)]
-  (when-not (.hasRoot the-var)
-    (.bindRoot the-var clojure.test/report)))
+(intern (the-ns 'clojure.test) 'old-report clojure.test/report)
 
 (def #^:dynamic #^:private *renderer* println)
 
@@ -38,17 +36,16 @@
      ~test-form
      (#'fact-checks-out?)))
 
+
+
 (defn midje-position-string [[filename line-num]]
   (format "(%s:%s)" filename line-num))
 
-(defmacro with-identity-renderer [& forms]   ; for testing
-  `(binding [*renderer* identity] ~@forms))
-
 (letfn [(attractively-stringified-form [form]
           (pred-cond form
-            named-function? (format "a function named '%s'" (function-name form))
+            named-function?     (format "a function named '%s'" (function-name form))
             captured-throwable? (friendly-stacktrace form)
-            :else (pr-str form)))
+            :else               (pr-str form)))
 
         (fail-at [m]
           [(str "\n" (color/fail "FAIL:") " "
@@ -131,7 +128,7 @@
       (str "    Midje caught an exception when translating this form:")
       (str "      " (pr-str (:macro-form m)))
       (str "      " "This stack trace *might* help:")
-      (:stacktrace m))))
+      (indented (:stacktrace m)))))
   
 (letfn [(render [m]
           (->> m report-strings flatten (remove nil?) (map *renderer*) doall))]

@@ -74,6 +74,7 @@
    Arguments can be in any order. Except for a class argument, they can be repeated.
    So, for example, you can write this:
        (fact (foo) => (throws #\"one part\" #\"another part\"))"
+  {:arglists '([& args])}
   (fn [& args]
     (set (for [arg args]
            (pred-cond arg
@@ -92,7 +93,7 @@
 
 (defmethod throws #{:throwable} [clazz]
   (checker [^ICapturedThrowable wrapped-throwable]
-    (= clazz (class (.throwable wrapped-throwable)))))
+    (instance? clazz (.throwable wrapped-throwable))))
 
 (def-many-methods throws [#{:throwable :predicate}, #{:message :predicate },
                           #{:throwable :message}, #{:throwable :message :predicate}] [& args]

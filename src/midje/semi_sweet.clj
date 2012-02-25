@@ -18,6 +18,7 @@
         [clojure.pprint])
   (:require [midje.cljs :as cljs]
             [clojure.string :as str]))
+
 (immigrate 'midje.unprocessed)
 (immigrate 'midje.ideas.arrow-symbols)
 
@@ -30,7 +31,7 @@
 ;;
 ;; FURTHERMORE, I wanted to use set operations to check for fake and not-called,
 ;; but those fail for reasons I don't understand. Bah.
-(defn- #^:tested-private check-for-arrow [arrow]
+(defn- ^{:testable true } check-for-arrow [arrow]
   (get {=> :check-match
         =expands-to=> :check-match
         =not=> :check-negated-match
@@ -144,11 +145,13 @@
   "Creates a fake map that a particular call will be made. When it is made,
    the result is to be returned. Either form may contain bound variables. 
    Example: (let [a 5] (fake (f a) => a))"
+  {:arglists '([call-form arrow result & overrides])}
   [& forms]
   (when-valid &form (fake* forms)))
 
 (defmacro data-fake
   "Creates a fake map that's used to associate key/value pairs with a metaconstant"
+  {:arglists '([metaconstant arrow contained & overrides])}
   [& forms]
   (when-valid &form (data-fake* forms)))
 
@@ -156,11 +159,12 @@
   "Creates an fake map that a function will not be called.
    Example: (not-called f))
    DEPRECATED: Prefer `:times 0` annotation to `fake`, ex. (provided (f) => 4 :times 0))"
-  {:deprecated "1.3-alpha2"}
+  {:deprecated "1.3-alpha2"
+   :arglists '([var-sym & overrides])}
   [forms]
   (not-called* forms))
 
-(defn- #^:tested-private a-fake? [x]
+(defn- ^{:testable true } a-fake? [x]
   (and (seq? x)
        (is-semi-sweet-keyword? (first x))))
 
@@ -170,8 +174,9 @@
    results are as expected. If the expected results are a function, it
    will be called with the actual result as its single argument.
 
-   To strip tests from production code, set either clojure.test/*load-tests*
-   or midje.semi-sweet/*check* to false."
+   To strip tests from production code, set either clojure.test/*load-tests*, 
+   midje.semi-sweet/*include-midje-checks*, or midje.sweet/*include-midje-checks* to false."
+  {:arglists '([call-form arrow expected-result & fakes+overrides])}
   [& _]
   (when (user-desires-checking?)
     (valid-let [[call-form arrow expected-result & fakes+overrides] (validate &form)

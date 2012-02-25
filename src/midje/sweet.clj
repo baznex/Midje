@@ -43,6 +43,14 @@
 (intern+keep-meta *ns* 'after #'background/after)
 (intern+keep-meta *ns* 'around #'background/around)
 
+(defmacro expose-testables
+  "Enables testing of vars in the target ns which have ^:testable metadata"
+  [target-ns]
+  (macro-for [testable-sym (for [[sym var] (ns-interns target-ns)
+                                 :when (:testable (meta var))]
+                              sym) ]
+    `(def ~testable-sym (intern '~target-ns '~testable-sym))))
+
 (defmacro background 
   "Runs facts against setup code which is run before, around, or after 
    :contents, :facts or :checks. Optionally, contains one or more provided forms 
@@ -97,7 +105,7 @@
                  (clojure.test/report {:type :exceptional-user-error
                                        :description (midje.internal-ideas.fact-context/nested-fact-description)
                                        :macro-form '~&form
-                                       :stacktrace ~(friendly-stacktrace ex)
+                                       :stacktrace '~(user-error-exception-lines ex)
                                        :position (midje.internal-ideas.file-position/line-number-known ~(:line (meta &form)))}))
                false)))))))
 
@@ -112,12 +120,14 @@
   (macro-for [name future-fact-variant-names]
     `(defmacro ~(symbol name)
        "Fact that will not be run. Generates 'WORK TO DO' report output as a reminder."
+       {:arglists '([& ~'forms])}
        [& forms#]
        (future-fact* ~'&form))))
 
 (generate-future-fact-variants)
 
-(defmacro tabular 
+(defmacro
+  tabular 
   "Generate a table of related facts.
   
    Ex. (tabular \"table of simple math\" 
@@ -127,5 +137,6 @@
            1 2      3
            3 4      7
            9 10     19 )"
+  {:arglists '([doc-string? fact table])}
   [& _]
   (tabular* (keys &env) &form))

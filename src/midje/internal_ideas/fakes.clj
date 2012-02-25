@@ -9,7 +9,7 @@
         [midje.checkers.defining :only [checker? checker-makers]]
         [midje.internal-ideas.expect :only [expect? up-to-full-expect-form]]
         [midje.util.form-utils :only [first-named? translate-zipper map-difference
-                                      hash-map-duplicates-ok pred-cond]]
+                                      hash-map-duplicates-ok pred-cond to-thunks]]
         [midje.ideas.metaconstants :only [metaconstant-for-form
                                           with-fresh-generated-metaconstant-names]]
         [midje.checkers.extended-equality :only [extended-= extended-list-= extended-fn?]]
@@ -46,27 +46,33 @@
     (fn [actual] (extended-= actual (exactly expected)))
     (fn [actual] (extended-= actual expected))))
 
-(defmulti make-result-supplier (fn [arrow & _] arrow))
+(defmulti make-result-supplier* (fn [arrow & _] arrow))
 
-(defmethod make-result-supplier => [_arrow_ result] (constantly result))
+(defmethod make-result-supplier* => [_arrow_ result] (constantly result))
 
-(defmethod make-result-supplier =streams=> [_arrow_ result-stream]
-  (let [current-stream (atom result-stream)]
+(defmethod make-result-supplier* =streams=> [_arrow_ result-stream-of-thunks]
+  (let [the-stream (atom result-stream-of-thunks)]
     (fn []
-      (when (empty? @current-stream)
+      (when (empty? @the-stream)
         (throw (user-error "Your =stream=> ran out of values.")))
-      (let [current-result (first @current-stream)]
-        (swap! current-stream rest)
-        current-result))))
+      (let [current-result (first @the-stream)]
+        (swap! the-stream rest)
+        (current-result)))))
 
-(defmethod make-result-supplier =throws=> [_arrow_ throwable]
+(defmethod make-result-supplier* =throws=> [_arrow_ throwable]
   (fn []
     (when (not (instance? Throwable throwable))
       (throw (user-error "Right side of =throws=> should extend Throwable.")))
     (throw throwable)))
 
-(defmethod make-result-supplier :default [arrow result-stream]
-  (throw (user-error "It's likely you misparenthesized your metaconstant prerequisite.")))
+(defmethod make-result-supplier* :default [arrow result-stream]
+  (throw (user-error "It's likely you misparenthesized your metaconstant prerequisite,"
+                     "or that you forgot to use an arrow in your provided form.")))
+
+(defmacro make-result-supplier [arrow rhs]
+  (if (= (name =streams=>) (name arrow))
+    `(make-result-supplier* ~arrow (to-thunks ~rhs))
+    `(make-result-supplier* ~arrow ~rhs)))
 
 (letfn [(make-fake-map
           [var-sym special-to-fake-type user-override-pairs]
@@ -112,7 +118,7 @@
 
 ;;; Binding
 
-(defn #^:tested-private usable-default-function? [fake]
+(defn usable-default-function? [fake]
   (and (bound? (:lhs fake))
     (let [value-in-var (var-get (:lhs fake))
           unfinished-fun (:midje/unfinished-fun (meta (:lhs fake)))]
@@ -137,7 +143,7 @@
   
   (def #^:dynamic #^:private *call-action-count* (atom 0))
   
-  (defn- #^:tested-private best-call-action [function-var actual-args fakes]
+  (defn- ^{:testable true } best-call-action [function-var actual-args fakes]
     (when (= 2 @*call-action-count*)
       (throw (user-error "You seem to have created a prerequisite for"
                (str (pr-str function-var) " that interferes with that function's use in Midje's")
@@ -159,7 +165,7 @@
           :else                                      (:value-at-time-of-faking 
                                                        (first possible-fakes)))))))
 
-(defn- #^:tested-private call-faker
+(defn- ^{:testable true } call-faker
   "This is the function that handles all mocked calls."
   [function-var actual-args fakes]
   (macrolet [(counting-nested-calls [& forms]
@@ -182,10 +188,10 @@
 
 ;; Binding map related
 
-(defn- #^:tested-private unique-vars [fakes]
+(defn- ^{:testable true } unique-vars [fakes]
   (distinct (map :lhs fakes)))
 
-(defn- #^:tested-private binding-map-with-function-fakes [fakes]
+(defn- ^{:testable true } binding-map-with-function-fakes [fakes]
   (letfn [(fn-that-implements-a-fake [function]
             (vary-meta function assoc :midje/faked-function true))
           (make-faker [var]
@@ -194,12 +200,12 @@
       (for [var (unique-vars fakes)]
         [var (make-faker var)]))))
 
-(defn- #^:tested-private merge-metaconstant-bindings [bindings]
+(defn- ^{:testable true } merge-metaconstant-bindings [bindings]
   (apply merge-with (fn [^Metaconstant v1 ^Metaconstant v2]
                       (Metaconstant. (.name v1) (merge (.storage v1) (.storage v2))))
     bindings))
 
-(defn- #^:tested-private data-fakes-to-metaconstant-bindings [fakes]
+(defn- ^{:testable true } data-fakes-to-metaconstant-bindings [fakes]
   (for [{var :lhs, contents :contained} fakes]
     {var (Metaconstant. (object-name var) contents)}))
 
@@ -253,7 +259,7 @@
 ;; mapping. These substitutions are used both to "flatten" a fake form and also
 ;; to generate new fakes.
 
-(defn- #^:tested-private mockable-funcall? [x]
+(defn- ^{:testable true } mockable-funcall? [x]
   (let [constructor? (fn [symbol]
                        (.endsWith (name symbol) "."))
         special-forms '[quote fn let new]
@@ -290,7 +296,7 @@
   (let [new-args (for [a args] (get substitutions a a))]
     `(~fake (~fun ~@new-args) ~@rest)))
 
-(defn- #^:tested-private unfolding-step
+(defn- ^{:testable true } unfolding-step
   "This walks through a `pending` list that may contain fakes. Each element is
    copied to the `finished` list. If it is a suitable fake, its nested 
    are flattened (replaced with a metaconstant). If the metaconstant was newly

@@ -1,10 +1,17 @@
 1.3.2-SNAPSHOT
 -------------
-* Can now have prerequisites that throw Throwabless using =throws=>
+* throws now accepts any extending Throwable. For example, this now passes:
+  (throw (NullPointerException.)) => (throws Exception)
+* each item in the right hand side of =streams=> will evaluate lazily:
+  (provided
+     (volatile-fn) =streams=> [(throw (Exception.) (throw (Exception.)) :evaluates-succesfully] 
+* new function midje.sweet/expose-testables will allow you to write facts against 
+  functions defined with the metadata of ^{:testable true} [or ^:testable, 
+  or #^testable depending on which Clojure version you're running] 
+* Can now have prerequisites that throw Throwables using =throws=>
     (provided (foo) =throws=> (Exception.))
 * Chatty checkers can destructure their single argument.                                           
 * tabular no longer requires variables names to begin with '?'
-* friendlier stacktraces with clj-stacktrace
 * throws checker has been updated: args are now any combination, in
   any order of messages (or regexes), predicates, or 0 or 1 Throwable classes
 * many more common syntax mistakes give helpful error messages
@@ -17,6 +24,7 @@
 
 
 1.3.1 
+---------
 * Fix mysterious type conversion error in some cases
   when midje has to try really hard to guess the line number.
 

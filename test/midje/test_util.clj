@@ -4,11 +4,7 @@
   (:use [clojure.test]
         midje.checkers
         [clojure.set :only [subset?]]
-        [midje.util.form-utils :only [macro-for]]))
-
-(defmacro testable-privates [namespace & symbols]
-  (macro-for [sym symbols]
-    `(def ~sym (intern '~namespace '~sym))))
+        [midje.util.form-utils :only [macro-for alias-var]]))
 
 (def reported (atom []))
 
@@ -71,3 +67,6 @@
     (midje.sweet/fact 
       @reported midje.sweet/=> (one-of (contains {:type :validation-error 
                                                   :notes (contains ~error-msg)})))))
+
+(defmacro with-identity-renderer [& forms]
+  `(binding [midje.internal-ideas.report/*renderer* identity] ~@forms))

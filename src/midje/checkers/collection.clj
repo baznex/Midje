@@ -6,14 +6,16 @@
   midje.checkers.collection
   (:use [clojure.set :only [union]]
         [clojure.pprint :only [cl-format]]
+        [clojure.core.match :only [match]]
         [midje.util.backwards-compatible-utils :only [every-pred-m]] 
         [midje.util.form-utils :only [regex? record? classic-map? pred-cond macro-for]]
       	[midje.checkers collection-util util extended-equality chatty defining collection-comparison]
         [midje.error-handling.exceptions :only [user-error]]))
 
+
 (def #^:private looseness-modifiers #{:in-any-order :gaps-ok})
 
-(defn- separate-looseness
+(defn- ^{:testable true} separate-looseness
   "Distinguish expected results from looseness descriptions.
    1 :in-any-order => [1 [:in-any-order]]
    1 2 :in-any-order => [ [1 2] [:in-any-order] ]
@@ -30,98 +32,88 @@
       (recur (conj known-to-be-expected (first might-be-looseness-modifier))
              (rest might-be-looseness-modifier))))))
 
-(letfn [(compatibility-check
-          ;;Fling an error if the combination of actual, expected, and looseness won't work.
-          [actual expected looseness]
+(letfn [
+  (compatibility-check
+    ;;Fling an error if the combination of actual, expected, and looseness won't work.
+    [actual expected looseness]
 
-          ;; Throwing Errors is just an implementation convenience.
-          (cond (regex? expected)
-            (cond (and (not (sequential? actual))
-                       (not (empty? looseness)))
-              (throw (user-error (str "I don't know how to make sense of a "
-                                   "regular expression applied "
-                                   looseness "."))))
+    ;; Throwing Errors is just an implementation convenience.
+    (cond (regex? expected)
+      (cond (and (not (sequential? actual))
+                 (not (empty? looseness)))
+        (throw (user-error (str "I don't know how to make sense of a "
+                             "regular expression applied "
+                             looseness "."))))
 
-            (not (collection-like? actual))
-            (throw (user-error (str "You can't compare " (pr-str actual) " (" (type actual)
-                                 ") to " (pr-str expected) " (" (type expected) ").")))
+      (not (collection-like? actual))
+      (throw (user-error (str "You can't compare " (pr-str actual) " (" (type actual)
+                           ") to " (pr-str expected) " (" (type expected) ").")))
 
-            (and (record? expected)
-                 (map? actual)
-                 (not (= (class expected) (class actual))))
-            (throw (user-error (str "You expected a " (.getName (class expected))
-                                 " but the actual value was a "
-                                 (if (classic-map? actual) "map" (.getName (class actual)))
-                                 ".")))
+      (and (record? expected)
+           (map? actual)
+           (not (= (class expected) (class actual))))
+      (throw (user-error (str "You expected a " (.getName (class expected))
+                           " but the actual value was a "
+                           (if (classic-map? actual) "map" (.getName (class actual)))
+                           ".")))
 
-            (and (map? actual)
-                 (not (map? expected)))
-            (try (into {} expected)
-              (catch Throwable ex
-                (throw (user-error (str "If " (pr-str actual) " is a map, "
-                                     (pr-str expected)
-                                     " should look like map entries.")))))))
-        (standardized-arguments
-          ;;Reduce arguments to standard forms so there are fewer combinations to
-          ;;consider. Also blow up for some incompatible forms."
-          [actual expected looseness]
-          (compatibility-check actual expected looseness)
-          (pred-cond actual
-            sequential?
-            (pred-cond expected
-              set? [actual (vec expected) (union looseness #{:in-any-order })]
-              right-hand-singleton? [actual [expected] (union looseness #{:in-any-order })]
-              :else [actual expected looseness])
+      (and (map? actual)
+           (not (map? expected)))
+      (try (into {} expected)
+        (catch Throwable ex
+          (throw (user-error (str "If " (pr-str actual) " is a map, "
+                               (pr-str expected)
+                               " should look like map entries.")))))))
+  (standardized-arguments
+    ;;Reduce arguments to standard forms so there are fewer combinations to
+    ;;consider. Also blow up for some incompatible forms."
+    [actual expected looseness]
+    (compatibility-check actual expected looseness)
+    (match [actual expected]
+      [(a :when sequential?) (e :when set?)]                  [actual (vec expected) (union looseness #{:in-any-order })]
+      [(a :when sequential?) (e :when right-hand-singleton?)] [actual [expected] (union looseness #{:in-any-order })]
+      [(a :when sequential?) _]                               [actual expected looseness]
+      [(a :when map?)        (b :when map?)]                  [actual expected looseness] 
+      [(a :when map?)        _]                               [actual (into {} expected) looseness]
+      [(a :when set?)        _]                               (recur (vec actual) expected looseness-modifiers)
+      [(a :when string?)    (e :when [(complement string?) 
+                                      (complement regex?)])]  (recur (vec actual) expected looseness-modifiers)
+      [_ _]                                                   [actual expected looseness]))
 
-            map?
-            (pred-cond expected
-              map? [actual expected looseness]
-              :else [actual (into {} expected) looseness])
+  (match? [actual expected looseness]
+    (let [comparison (compare-results actual expected looseness)]
+      (or (total-match? comparison)
+        (apply noted-falsehood
+          (cons (best-actual-match (midje-classification actual) comparison)
+            (best-expected-match (midje-classification actual) comparison expected))))))
 
-            set?
-            (recur (vec actual) expected looseness-modifiers)
+  (container-checker-maker [name checker-fn]
+    (checker [& args]
+      (let [[expected looseness] (separate-looseness args)]
+        (as-chatty-checker
+          (named-as-call name expected
+            (fn [actual]
+              (add-actual actual
+                (try (checker-fn actual expected looseness)
+                  (catch Error ex
+                    (noted-falsehood (.getMessage ex)))))))))))
 
-            string?
-            (pred-cond expected
-              (every-pred-m (complement string?) (complement regex?)) (recur (vec actual) expected looseness)
-              :else [actual expected looseness])
+  (has-xfix [x-name pattern-fn take-fn]
+    (checker [actual expected looseness]
+      (pred-cond actual
+        set? (noted-falsehood (format "Sets don't have %ses." x-name))
+        map? (noted-falsehood (format "Maps don't have %ses." x-name))
+        :else (let [[actual expected looseness] (standardized-arguments actual expected looseness)]
+                (cond (regex? expected)
+                  (try-re (pattern-fn expected) actual re-find)
 
-            :else [actual expected looseness]))
+                  (expected-fits? actual expected)
+                  (match? (take-fn (count expected) actual) expected looseness)
 
-        (match? [actual expected looseness]
-          (let [comparison (compare-results actual expected looseness)]
-            (or (total-match? comparison)
-              (apply noted-falsehood
-                (cons (best-actual-match (midje-classification actual) comparison)
-                  (best-expected-match (midje-classification actual) comparison expected))))))
-
-        (container-checker-maker [name checker-fn]
-          (checker [& args]
-            (let [[expected looseness] (separate-looseness args)]
-              (as-chatty-checker
-                (named-as-call name expected
-                  (fn [actual]
-                    (add-actual actual
-                      (try (checker-fn actual expected looseness)
-                        (catch Error ex
-                          (noted-falsehood (.getMessage ex)))))))))))
-
-        (has-xfix [x-name pattern-fn take-fn]
-          (checker [actual expected looseness]
-            (pred-cond actual
-              set? (noted-falsehood (format "Sets don't have %ses." x-name))
-              map? (noted-falsehood (format "Maps don't have %ses." x-name))
-              :else (let [[actual expected looseness] (standardized-arguments actual expected looseness)]
-                      (cond (regex? expected)
-                        (try-re (pattern-fn expected) actual re-find)
-
-                        (expected-fits? actual expected)
-                        (match? (take-fn (count expected) actual) expected looseness)
-
-                        :else (noted-falsehood
-                                (cl-format nil
-                                  "A collection with ~R element~:P cannot match a ~A of size ~R."
-                                  (count actual) x-name (count expected))))))))]
+                  :else (noted-falsehood
+                          (cl-format nil
+                            "A collection with ~R element~:P cannot match a ~A of size ~R."
+                            (count actual) x-name (count expected))))))))]
 
   (def ^{:midje/checker true
          :doc "Checks that the actual result starts with the expected result:
@@ -129,7 +121,8 @@
   [1 2 3] => (has-prefix   [1 2]) ; true
   [1 2 3] => (has-prefix   [2 1]) ; false - order matters
   [1 2 3] => (has-prefix   [2 1] :in-any-order) ; true
-  [1 2 3] => (has-prefix  #{2 1}) ; true "}
+  [1 2 3] => (has-prefix  #{2 1}) ; true "
+        :arglists '([expected-prefix looseness?])}
     has-prefix
     (container-checker-maker 'has-prefix
       (has-xfix "prefix" #(re-pattern (str "^" %)) take)))
@@ -140,7 +133,8 @@
   [1 2 3] => (has-suffix   [2 3]) ; true
   [1 2 3] => (has-suffix   [3 2]) ; false - order matters
   [1 2 3] => (has-suffix   [3 2] :in-any-order) ; true
-  [1 2 3] => (has-suffix  #{3 2}) ; true "}
+  [1 2 3] => (has-suffix  #{3 2}) ; true "
+         :arglists '([expected-suffix looseness?])}
     has-suffix
     (container-checker-maker 'has-suffix
       (has-xfix "suffix" #(re-pattern (str % "$")) take-last)))
@@ -178,7 +172,8 @@ what's contained by a set. The following two are equivalent:
    [700 4 5] => (contains [4 5 700] :in-any-order)
    [700 4 5] => (contains #{4 5 700})
 
-:gaps-ok can be used with a set. (So can :in-any-order, but it has no effect.)"}
+:gaps-ok can be used with a set. (So can :in-any-order, but it has no effect.)"
+    :arglists '([expected looseness])}
     contains (container-checker-maker 'contains
                (fn [actual expected looseness]
                  (let [[actual expected looseness] (standardized-arguments actual expected looseness)]
@@ -205,7 +200,8 @@ However, it's required if you want to use checkers in the expected result:
 just is also useful if you don't care about order:
 
   [1 3 2] => (just   [1 2 3] :in-any-order)
-  [1 3 2] => (just  #{1 2 3})"}
+  [1 3 2] => (just  #{1 2 3})"
+         :arglists '([expected looseness])}
     just (container-checker-maker 'just
            (fn [actual expected looseness]
              (let [[actual expected looseness] (standardized-arguments actual expected looseness)]
@@ -249,7 +245,11 @@ just is also useful if you don't care about order:
           docstring (cl-format nil "Checks whether a sequence contains precisely ~R result~:[s, and \n  that they each match~;, and \n  that it matches~] the checker.
   
    Ex. (fact ~A => (~C :a))" num (= num 1) (vec (repeat num :a )) name)]
-      `(defchecker ~name ~docstring [expected-checker#]
-         (n-of expected-checker# ~num)))))
+      `(defchecker 
+         ~name 
+         ~docstring
+         {:arglists '([~'expected])}
+         [expected#]
+         (n-of expected# ~num)))))
 
 (generate-n-of-checkers)
