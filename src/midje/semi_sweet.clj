@@ -39,13 +39,11 @@
 (defn ^:private cljs-file->ns
   "given the cljs file name produce the cljs ns"
   [cljs-file]
-  (symbol (str/replace
-           (str/replace
-            (str/replace
-             cljs-file
-             #"\.cljs" "")
-            #"_" "-")
-           #"/" ".")))
+  (->
+   (str/replace cljs-file #"\.cljs" "")
+   (str/replace #"_" "-")
+   (str/replace #"/" ".")
+   symbol))
 
 (defn ^:private cljs-ns-meta
   "extract the metadata from the ns form"
