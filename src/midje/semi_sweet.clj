@@ -39,20 +39,20 @@
 (defn ^:private cljs-file->ns
   "given the cljs file name produce the cljs ns"
   [cljs-file]
-  (->
-   (str/replace cljs-file #"\.cljs" "")
-   (str/replace #"_" "-")
-   (str/replace #"/" ".")
-   symbol))
+  (-> cljs-file
+      (str/replace #"\.cljs" "")
+      (str/replace #"_" "-")
+      (str/replace #"/" ".")
+      symbol))
 
 (defn ^:private cljs-ns-meta
   "extract the metadata from the ns form"
   []
-  (let [{cljs-file :cljs-file} (-> (format "test/%s" *file*)
-                                   slurp read-string second meta)]
-    (if cljs-file
-      [(cljs-file->ns cljs-file) cljs-file]
-      nil)))
+  (let [first-form (read-string (slurp (format "test/%s" *file*)))
+        {cljs-file :cljs-file} (when (= 'ns (first first-form))
+                                 (meta (second first-form)))]
+    (when cljs-file
+      [(cljs-file->ns cljs-file) cljs-file])))
 
 (defmacro process-call-form
   "helper for unprocessed check"
