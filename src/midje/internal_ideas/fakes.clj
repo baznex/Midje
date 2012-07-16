@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "The semi-sweet representation of provided forms."}
   midje.internal-ideas.fakes
   (:use [utilize.seq :only (separate find-first)]
@@ -9,10 +7,15 @@
         [midje.checkers.defining :only [checker? checker-makers]]
         [midje.internal-ideas.expect :only [expect? up-to-full-expect-form]]
         [midje.util.form-utils :only [first-named? translate-zipper map-difference
-                                      hash-map-duplicates-ok pred-cond to-thunks]]
-        [midje.ideas.metaconstants :only [metaconstant-for-form
+                                      hash-map-duplicates-ok pred-cond to-thunks
+                                      quoted-list-form? extended-fn?
+                                      fnref-call-form
+                                      fnref-var-object
+                                      fnref-symbol
+                                      fnref-dereference-form]]
+        [midje.ideas.metaconstants :only [merge-metaconstants metaconstant-for-form
                                           with-fresh-generated-metaconstant-names]]
-        [midje.checkers.extended-equality :only [extended-= extended-list-= extended-fn?]]
+        [midje.checkers.extended-equality :only [extended-= extended-list-=]]
         [midje.internal-ideas.file-position :only [user-file-position]]
         [midje.util.thread-safe-var-nesting :only [namespace-values-inside-out
                                                    with-pushed-namespace-values
@@ -20,6 +23,7 @@
         [midje.error-handling.exceptions :only [user-error]]
         [midje.internal-ideas.wrapping :only [with-wrapping-target]]
         [midje.ideas.arrow-symbols]
+        [midje.config :only [*allow-default-prerequisites*]]
         [clojure.tools.macro :only [macrolet]])
   (:require [clojure.zip :as zip])
   (:import midje.ideas.metaconstants.Metaconstant))
@@ -35,139 +39,162 @@
       (first-named? form "data-fake")))
 
 
-;;; Creation
+;;; Creating fake maps
 
 (defn arg-matcher-maker
   "Based on an expected value, generates a function that returns 
   true if the actual value matches it."
   [expected]
   (if (and (extended-fn? expected)
-        (not (checker? expected)))
+           (not (checker? expected)))
     (fn [actual] (extended-= actual (exactly expected)))
     (fn [actual] (extended-= actual expected))))
 
-(defmulti make-result-supplier* (fn [arrow & _] arrow))
+(defmulti fn-fake-result-supplier (fn [arrow & _] arrow))
 
-(defmethod make-result-supplier* => [_arrow_ result] (constantly result))
+(defmethod fn-fake-result-supplier => [_arrow_ result] (constantly result))
 
-(defmethod make-result-supplier* =streams=> [_arrow_ result-stream-of-thunks]
-  (let [the-stream (atom result-stream-of-thunks)]
+(defmethod fn-fake-result-supplier =streams=> [_arrow_ result-stream]
+  (let [the-stream (atom result-stream)]
     (fn []
       (when (empty? @the-stream)
         (throw (user-error "Your =stream=> ran out of values.")))
       (let [current-result (first @the-stream)]
         (swap! the-stream rest)
-        (current-result)))))
+        current-result))))
 
-(defmethod make-result-supplier* =throws=> [_arrow_ throwable]
+(defmethod fn-fake-result-supplier =throws=> [_arrow_ throwable]
   (fn []
-    (when (not (instance? Throwable throwable))
+    (when-not (instance? Throwable throwable) 
       (throw (user-error "Right side of =throws=> should extend Throwable.")))
     (throw throwable)))
 
-(defmethod make-result-supplier* :default [arrow result-stream]
+(defmethod fn-fake-result-supplier :default [arrow result-stream]
   (throw (user-error "It's likely you misparenthesized your metaconstant prerequisite,"
                      "or that you forgot to use an arrow in your provided form.")))
 
-(defmacro make-result-supplier [arrow rhs]
-  (if (= (name =streams=>) (name arrow))
-    `(make-result-supplier* ~arrow (to-thunks ~rhs))
-    `(make-result-supplier* ~arrow ~rhs)))
 
-(letfn [(make-fake-map
-          [var-sym special-to-fake-type user-override-pairs]
-          (let [common-to-all-fakes `{:lhs (var ~var-sym)
-                                      :count-atom (atom 0)
-                                      :position (user-file-position)}]
+(defn #^:private
+  statically-disallowed-prerequisite-function
+  "To prevent people from mocking functions that Midje itself uses,
+   we mostly rely on dynamic checking. But there are functions within
+   the dynamic checking code that must also not be replaced. These are
+   the ones that are known."
+  [some-var]
+  (#{#'deref} some-var))
+
+(defn #^:private
+  raise-disallowed-prerequisite-error [function-name]
+  (throw
+   (user-error
+    "You seem to have created a prerequisite for"
+    (str (pr-str function-name) " that interferes with that function's use in Midje's")
+    (str "own code. To fix, define a function of your own that uses "
+         (or (:name (meta function-name)) function-name) ", then")
+    "describe that function in a provided clause. For example, instead of this:"
+    "  (provided (every? even? ..xs..) => true)"
+    "do this:"
+    "  (def all-even? (partial every? even?))"
+    "  ;; ..."
+    "  (provided (all-even? ..xs..) => true)")))
+
+(letfn [(make-fake-map [call-form arrow rhs fnref special-to-fake-type user-override-pairs]
+          (let [common-to-all-fakes `{:var ~(fnref-call-form fnref)
+                                      :call-count-atom (atom 0)
+                                      :position (user-file-position)
+
+                                      ;; for Midje tool creators:
+                                      :call-form '~call-form
+                                      :arrow '~arrow 
+                                      :rhs '~rhs}]
             (merge
               common-to-all-fakes
               special-to-fake-type
               (apply hash-map-duplicates-ok user-override-pairs)))) ]
 
-  (defn fake* [ [[var-sym & args :as call-form] arrow result & overrides] ]
+  (defn fake* [ [[fnref & args :as call-form] arrow result & overrides] ]
     ;; The (vec args) keeps something like (...o...) from being
     ;; evaluated as a function call later on. Right approach would
     ;; seem to be '~args. That causes spurious failures. Debug
     ;; someday.
-    (make-fake-map var-sym
+    (when (statically-disallowed-prerequisite-function (fnref-var-object fnref))
+      (raise-disallowed-prerequisite-error (fnref-var-object fnref)))
+    (make-fake-map call-form arrow (cons result overrides)
+      fnref
       `{:arg-matchers (map midje.internal-ideas.fakes/arg-matcher-maker ~(vec args))
         :call-text-for-failures (str '~call-form)
-        :value-at-time-of-faking (if (bound? (var ~var-sym)) ~var-sym)
-        :result-supplier (make-result-supplier ~arrow ~result)
+        :value-at-time-of-faking (if (bound? ~(fnref-call-form fnref))
+                                   ~(fnref-dereference-form fnref))
+        :result-supplier (fn-fake-result-supplier ~arrow ~result)
         :type :fake}
       overrides))
   
   (defn data-fake* [[metaconstant arrow contained & overrides]]
-    (make-fake-map metaconstant
+    (make-fake-map metaconstant arrow (cons contained overrides)
+      metaconstant
       `{:contained ~contained
-        :count-atom (atom 1) ;; CLUDKJE!
+        :call-count-atom (atom 1) ;; CLUDKJE!
         :type :fake
-        :data-fake :data-fake}
+        :data-fake true}
       overrides))
   
   (defn not-called* [var-sym & overrides]
-    (make-fake-map var-sym
+    (make-fake-map nil nil nil ;; deprecated, so no support for fields for tool creators 
+      var-sym
       `{:call-text-for-failures (str '~var-sym " was called.")
         :result-supplier (constantly nil)
         :type :not-called}
       overrides)))
 
 (defn tag-as-background-fake [fake]
-  (concat fake `(:background :background :times (~'range 0))))
+  `(~@fake :background :background :times (~'range 0)))
 
 
-;;; Binding
+;;; Handling mocked calls
+  
+(defmulti ^{:private true} call-handled-by-fake? (fn [function-var actual-args fake] 
+                                                   (:type fake)))
+
+(defmethod call-handled-by-fake? :not-called [function-var actual-args fake]
+  (= function-var (:var fake)))
+
+(defmethod call-handled-by-fake? :default [function-var actual-args fake]
+  (and (= function-var (:var fake))
+       (= (count actual-args) (count (:arg-matchers fake)))
+       (extended-list-= actual-args (:arg-matchers fake))))
+
 
 (defn usable-default-function? [fake]
-  (and (bound? (:lhs fake))
-    (let [value-in-var (var-get (:lhs fake))
-          unfinished-fun (:midje/unfinished-fun (meta (:lhs fake)))]
-      (and (extended-fn? value-in-var)
-           (or (nil? unfinished-fun)
-               (not= unfinished-fun value-in-var))))))
+  (and *allow-default-prerequisites*
+       (bound? (:var fake))
+       (let [value-in-var (var-get (:var fake))
+             unfinished-fun (:midje/unfinished-fun (meta (:var fake)))]
+         (and (extended-fn? value-in-var)
+              (or (nil? unfinished-fun)
+                  (not= unfinished-fun value-in-var))))))
 
-(letfn [(var-handled-by-fake? [function-var fake]
-          (= function-var (:lhs fake)))]
-  
-  (defmulti ^{:private true} call-handled-by-fake? (fn [function-var actual-args fake] 
-                                                     (:type fake)))
-  
-  (defmethod call-handled-by-fake? :not-called [function-var actual-args fake]
-    (var-handled-by-fake? function-var fake))
-  
-  (defmethod call-handled-by-fake? :default [function-var actual-args fake]
-    (and (var-handled-by-fake? function-var fake)
-         (= (count actual-args) (count (:arg-matchers fake)))
-         (extended-list-= actual-args (:arg-matchers fake))))
-  
-  
-  (def #^:dynamic #^:private *call-action-count* (atom 0))
-  
-  (defn- ^{:testable true } best-call-action [function-var actual-args fakes]
-    (when (= 2 @*call-action-count*)
-      (throw (user-error "You seem to have created a prerequisite for"
-               (str (pr-str function-var) " that interferes with that function's use in Midje's")
-               (str "own code. To fix, define a function of your own that uses "
-                 (or (:name (meta function-var)) function-var) ", then")
-               "describe that function in a provided clause. For example, instead of this:"
-               "  (provided (every? even? ..xs..) => true)"
-               "do this:"
-               "  (def all-even? (partial every? even?))"
-               "  ;; ..."
-               "  (provided (all-even? ..xs..) => true)")))
-    (if-let [found (find-first (partial call-handled-by-fake? function-var actual-args)
-                               fakes)]
-      found
-      (let [possible-fakes (filter (partial var-handled-by-fake? function-var) fakes)]
-        (pred-cond possible-fakes
-          empty?                                     nil
-          (comp not usable-default-function? first)  nil ;; Finding default, any possible fake works
-          :else                                      (:value-at-time-of-faking 
-                                                       (first possible-fakes)))))))
+;; Used for IFn interface
+(def #^:private ^{:testable true}
+     default-function :value-at-time-of-faking)
 
-(defn- ^{:testable true } call-faker
-  "This is the function that handles all mocked calls."
+(def #^:dynamic #^:private *call-action-count* (atom 0))
+
+
+(defn- ^{:testable true } best-call-action 
+  "Returns a fake: when one can handle the call
+   Else returns a function: from the first fake with a usable-default-function.
+   Returns nil otherwise."
   [function-var actual-args fakes]
+  (when (= 2 @*call-action-count*)
+    (raise-disallowed-prerequisite-error function-var))
+  (if-let [found (find-first (partial call-handled-by-fake? function-var actual-args) fakes)]
+    found
+    (when-let [fake-with-usable-default (find-first #(and (= function-var (:var %)) 
+                                                          (usable-default-function? %)) 
+                                                    fakes)]
+      (default-function fake-with-usable-default))))
+
+(defn- ^{:testable true } handle-mocked-call [function-var actual-args fakes]
   (macrolet [(counting-nested-calls [& forms]
                `(try
                   (swap! *call-action-count* inc)
@@ -176,80 +203,70 @@
 
     (let [action (counting-nested-calls (best-call-action function-var actual-args fakes))]
       (pred-cond action
-        nil?          (clojure.test/report {:type :mock-argument-match-failure
-                                            :lhs function-var
-                                            :actual actual-args
-                                            :position (:position (first fakes))})
         extended-fn?  (apply action actual-args)
-        :else         (do
-                        (swap! (:count-atom action) inc)
-                        ((:result-supplier action )))))))
+        map?          (do
+                        (swap! (:call-count-atom action) inc)
+                        ((:result-supplier action )))
+        :else (clojure.test/report {:type :mock-argument-match-failure
+                                    :var function-var
+                                    :actual actual-args
+                                    :position (:position (first fakes))})))))
 
 
 ;; Binding map related
 
-(defn- ^{:testable true } unique-vars [fakes]
-  (distinct (map :lhs fakes)))
+(defn- fn-fakes-binding-map [fn-fakes]
+  (let [var->faker-fn (fn [the-var]
+                        (-> (fn [& actual-args] 
+                               (handle-mocked-call the-var actual-args fn-fakes)) 
+                            (vary-meta assoc :midje/faked-function true)))
+        fn-fake-vars (map :var fn-fakes)]
+    (zipmap fn-fake-vars 
+            (map var->faker-fn fn-fake-vars))))
 
-(defn- ^{:testable true } binding-map-with-function-fakes [fakes]
-  (letfn [(fn-that-implements-a-fake [function]
-            (vary-meta function assoc :midje/faked-function true))
-          (make-faker [var]
-            (fn-that-implements-a-fake (fn [& actual-args] (call-faker var actual-args fakes))))]
-    (into {}
-      (for [var (unique-vars fakes)]
-        [var (make-faker var)]))))
+(defn- data-fakes-binding-map [data-fakes]
+  (apply merge-with merge-metaconstants (for [{:keys [var contained]} data-fakes]
+                                          {var (Metaconstant. (object-name var) contained)})))
 
-(defn- ^{:testable true } merge-metaconstant-bindings [bindings]
-  (apply merge-with (fn [^Metaconstant v1 ^Metaconstant v2]
-                      (Metaconstant. (.name v1) (merge (.storage v1) (.storage v2))))
-    bindings))
-
-(defn- ^{:testable true } data-fakes-to-metaconstant-bindings [fakes]
-  (for [{var :lhs, contents :contained} fakes]
-    {var (Metaconstant. (object-name var) contents)}))
-
-(letfn [(binding-map-with-data-fakes [data-fakes]
-          (merge-metaconstant-bindings (data-fakes-to-metaconstant-bindings data-fakes)))]
-  
-  (defn binding-map [fakes]
-    (let [[data-fakes function-fakes] (separate :data-fake fakes)]
-      (merge (binding-map-with-function-fakes function-fakes)
-             (binding-map-with-data-fakes data-fakes)))))
+(defn binding-map [fakes]
+  (let [[data-fakes fn-fakes] (separate :data-fake fakes)]
+    (merge (fn-fakes-binding-map fn-fakes) 
+           (data-fakes-binding-map data-fakes))))
 
 (defmacro with-installed-fakes [fakes & forms]
   `(with-altered-roots (binding-map ~fakes) ~@forms))
 
-;;; Checking
 
-(defn fake-count [fake] @(:count-atom fake))
+;;; Checking
 
 (defmulti call-count-incorrect? :type)
 
 (defmethod call-count-incorrect? :fake [fake]
   (let [method (or (:times fake) :default )
-        count (fake-count fake)]
+        count @(:call-count-atom fake)]
     (pred-cond method 
       #(= % :default) (zero? count)
       number?         (not= method count)
-      coll?           (not (some #{count} method))
+      coll?           (not-any? (partial = count) method)
       fn?             (not (method count)))))
 
 (defmethod call-count-incorrect? :not-called [fake]
-  (not (zero? (fake-count fake))))
+  (not (zero? @(:call-count-atom fake))))
 
-(defn check-call-counts [fakes]
-  (doseq [fake fakes]
-    (when (call-count-incorrect? fake)
-      (report {:type :mock-incorrect-call-count
-               :actual-count @(:count-atom fake)
-               :expected-call (:call-text-for-failures fake)
-               :position (:position fake)
-               :expected (:call-text-for-failures fake)}))))
+(defn report-incorrect-call-counts [fakes]
+  (when-let [failures (seq (for [fake fakes
+                                 :when (call-count-incorrect? fake)]
+                              {:actual-count    @(:call-count-atom fake)
+                               :expected-count  (:times fake)
+                               :expected-call   (:call-text-for-failures fake)
+                               :position        (:position fake)
+                               :expected        (:call-text-for-failures fake)}))]
+    (report {:type :mock-incorrect-call-count
+             :failures failures} )))
 
 
 
-;; Folded prerequisites
+;;; Folded prerequisites
 
 ;; Note that folded prerequisites are in semi-sweet-style. (That is, they can only
 ;; be recognized after sweet style has been converted to semi-sweet.)
@@ -263,13 +280,13 @@
   (let [constructor? (fn [symbol]
                        (.endsWith (name symbol) "."))
         special-forms '[quote fn let new]
-        mockable-function-symbol? (fn [symbol]
-                                    (not (or (some #{symbol} special-forms)
-                                           (some #{symbol} checker-makers)
-                                           (constructor? symbol)
-                                           (checker? (resolve symbol)))))]
+        mockable-function? (fn [fnref]
+                             (not (or (some #{fnref} special-forms)
+                                      (some #{fnref} checker-makers)
+                                      (constructor? (fnref-symbol fnref))
+                                      (checker? (fnref-var-object fnref)))))]
     (and (list? x)
-      (mockable-function-symbol? (first x)))))
+      (mockable-function? (first x)))))
 
 (letfn [(fake-form-funcall-arglist [[fake funcall => value & overrides :as _fake-form_]]
           (rest funcall))]

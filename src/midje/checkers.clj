@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Checkers are for checking results of expectations, or checking 
             that appropriate arguments are passed to prerequisites"} 
   midje.checkers
@@ -20,6 +18,8 @@
              '[chatty-checker])
   (republish 'midje.checkers.simple
              '[truthy falsey TRUTHY FALSEY anything irrelevant exactly throws roughly])
+  (republish 'midje.checkers.combining
+             '[every-checker some-checker])
   (republish 'midje.checkers.collection
              '[has has-suffix has-prefix just contains n-of
               one-of two-of three-of four-of five-of six-of seven-of eight-of nine-of ten-of])

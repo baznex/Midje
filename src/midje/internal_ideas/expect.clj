@@ -1,4 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
 (ns ^{:doc "Mostly functions for identifying semi-sweet expects, and for converting 
             midje.sweet arrow forms into semi-sweet expcet forms."}
   midje.internal-ideas.expect
@@ -6,7 +5,7 @@
         [midje.util.namespace :only [matches-symbols-in-semi-sweet-or-sweet-ns?]]
         [midje.util.form-utils :only [first-named?]]
         [midje.util.zip :only [skip-to-rightmost-leaf n-times remove-moving-right]]
-        [midje.ideas.arrows :only [is-start-of-checking-arrow-sequence? arrow-sequence-overrides]]
+        [midje.ideas.arrows :only [start-of-checking-arrow-sequence? arrow-sequence-overrides]]
         [midje.internal-ideas.file-position :only [arrow-line-number]])
   (:require [clojure.zip :as zip]))
   
@@ -46,7 +45,7 @@
 
 
 (defn wrap-with-expect__then__at-rightmost-expect-leaf [loc]
-  (assert (is-start-of-checking-arrow-sequence? loc))
+  (assert (start-of-checking-arrow-sequence? loc))
   (let [right-hand (-> loc zip/right zip/right)
         arrow-sequence (-> loc zip/right zip/node)
         additions (arrow-sequence-overrides (zip/rights right-hand))
@@ -58,5 +57,5 @@
                           assoc :line line-number)))]
     (->> edited-loc
       zip/right
-      (n-times (+ 1 (count additions)) remove-moving-right)
+      (n-times (inc (count additions)) remove-moving-right)
       zip/remove)))

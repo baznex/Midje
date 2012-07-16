@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.ideas.t-background
   (:require [clojure.zip :as zip])
   (:use [midje sweet test-util]
@@ -7,7 +5,8 @@
         [midje.util unify]
         [midje.error-handling validation-errors]
         [midje.ideas.background :only [separate-background-forms setup-teardown-bindings
-                                 seq-headed-by-setup-teardown-form? background-wrappers]]))
+                                 seq-headed-by-setup-teardown-form? background-wrappers]]
+        midje.util))
 (expose-testables midje.ideas.background)
 
 (unfinished unused used)
@@ -69,7 +68,7 @@
 
 
 
-;; wrapping
+;; wrapping
 
 (fact "human-friendly background forms can be canonicalized appropriately"
   "fakes"

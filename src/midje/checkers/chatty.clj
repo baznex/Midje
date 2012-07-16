@@ -1,44 +1,28 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Checkers that explain more about a failure."}
   midje.checkers.chatty
   (:use [midje.checkers.util :only [named-as-call]]
+        [midje.checkers.extended-falsehood :only [data-laden-falsehood?
+                                                  as-data-laden-falsehood
+                                                  extended-false?]]
         [midje.checkers.defining :only [as-checker]]
-        [midje.util.form-utils :only [pairs quoted? single-arg-into-form-and-name]]))
+        [midje.util.form-utils :only [pairs quoted? single-destructuring-arg->form+name]]))
 
 ;; Note: checkers need to be exported in ../checkers.clj
-
-;; TODO: It might make sense to split the notion of extended-falsehood out of
-;; that of chatty checkers, since there are now other kinds of checkers that
-;; generate chatty falsehoods.
-
-(defn as-chatty-falsehood [value]
-  (with-meta value {:midje/chatty-checker-falsehood true}))
-
-(defn chattily-false? [value]
-  (or (not value)
-      (:midje/chatty-checker-falsehood (meta value))))
 
 (defn as-chatty-checker [function]
   (as-checker (vary-meta function assoc :midje/chatty-checker true)))
 
-(defn chatty-falsehood-to-map [value]
-  (with-meta value {}))
-
-(defn chatty-checker-falsehood? [value]
-  (:midje/chatty-checker-falsehood (meta value)))
-
-(defn add-actual [actual result]
-  (if (chatty-checker-falsehood? result)
-    (assoc result :actual actual)
-    result))
-  
 (defn chatty-checker? [fn]
   (:midje/chatty-checker (meta fn)))
 
+(defn add-actual [actual result]
+  (if (data-laden-falsehood? result)
+    (assoc result :actual actual)
+    result))
+  
 (defn chatty-worth-reporting-on? [arg]
   (and (or (list? arg) (seq? arg)) ; what started as a list (fn x y) might now be a seq.
-       (> (count arg) 0)
+       (pos? (count arg))
        (not (quoted? arg))))
 
 (defn chatty-untease [result-symbol arglist]
@@ -55,12 +39,12 @@
   [ [actual-arg] [f & args] ]
   (let [result-symbol (gensym "chatty-intermediate-results-")
         [complex-forms substituted-args] (chatty-untease result-symbol args)
-        [arg-form arg-name] (single-arg-into-form-and-name actual-arg)]
+        [arg-form arg-name] (single-destructuring-arg->form+name actual-arg)]
     `(as-chatty-checker
       (fn [~arg-form]
-        (let [~result-symbol (vector ~@complex-forms)]
-          (if (chattily-false? (~f ~@substituted-args))
+        (let [~result-symbol (vec ~complex-forms)]
+          (if (extended-false? (~f ~@substituted-args))
             (let [pairs# (pairs '~complex-forms ~result-symbol)]
-              (as-chatty-falsehood {:actual ~arg-name,
+              (as-data-laden-falsehood {:actual ~arg-name
                                     :intermediate-results pairs#}))
             true))))))

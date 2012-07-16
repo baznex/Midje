@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Functions for printing indented output for use in debugging."}
   midje.util.debugging
   (:use [utilize.string :only (but-last-str)]))
@@ -32,7 +30,7 @@
   "Print the given value at current indent level, then decrease the level"
   [val]
   (p val)
-  (when (> @indent-count 0)
+  (when (pos? @indent-count)
     (swap! indent-count dec)
     (swap! indent #(str (but-last-str 2 %) ">")))
   val)

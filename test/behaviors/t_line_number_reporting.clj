@@ -1,14 +1,12 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns behaviors.t-line-number-reporting
   (:use [midje.sweet])
   (:use [clojure.test])
   (:use [midje.test-util]))
 
-
+(binding [midje.config/*allow-default-prerequisites* false] 
 (defn f [n] n)
 
-(def position-1 11)
+(def position-1 9)
 
 (after-silently 
  (fact (+ 1 1) => 3)
@@ -39,15 +37,15 @@
 		   :position ["t_line_number_reporting.clj" (+ position-1 21)]}))))
 
 (defn g [n] n)
-(def position-2 42)
+(def position-2 40)
 
 (after-silently 
  (fact (g 1) => 1
    (provided (f 2) => 2))
  (fact
    @reported => (just [ (contains {:type :mock-incorrect-call-count
-				   :position ["t_line_number_reporting.clj" (+ position-2 4)]})
-			pass])))
+				                           :failures (contains (contains {:position ["t_line_number_reporting.clj" (+ position-2 4)]})) })
+			                  pass])))
 
   (after-silently 
    (fact (g 1) => 1
@@ -58,7 +56,7 @@
             (f 2) => 2))
    (fact
      @reported => (just [ (contains {:type :mock-incorrect-call-count
-				                             :position ["t_line_number_reporting.clj" (+ position-2 16)]})
+                                     :failures (contains (contains {:position ["t_line_number_reporting.clj" (+ position-2 16)]})) })
 			  pass])))
 
 (unfinished favorite-animal)
@@ -76,7 +74,7 @@
         (name (favorite-animal)) => "betsy"))
    (fact @reported => (just pass)))
 
-  (def line-number 79)
+  (def line-number 77)
   (after-silently
    (fact
      (favorite-animal-empty) => "betsy"
@@ -84,15 +82,15 @@
        (name (favorite-animal)) => "betsy"))
    (fact
      @reported => (just [ (contains {:type :mock-incorrect-call-count
-				                             :position ["t_line_number_reporting.clj" (+ line-number 5)]
-				                             :expected-call "(name ...favorite-animal-value-1...)" })
-                          (contains {:type :mock-incorrect-call-count
-				                             :expected-call "(favorite-animal)"
-				                             :position ["t_line_number_reporting.clj" (+ line-number 5)]})
+				                             :failures (just [(contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]
+				                                                        :expected-call "(name ...favorite-animal-value-1...)" })   
+                                                      (contains {:expected-call "(favorite-animal)"
+                                                                :position ["t_line_number_reporting.clj" (+ line-number 5)]})]
+                                                )})
                           (contains {:type :mock-expected-result-failure
 				                             :position ["t_line_number_reporting.clj" (+ line-number 3)]})])))
 
-  (def line-number 95)
+  (def line-number 93)
   (after-silently
    (fact
      (favorite-animal-only-animal) => "betsy"
@@ -100,11 +98,11 @@
        (name (favorite-animal)) => "betsy"))
    (fact
      @reported => (just [ (contains {:type :mock-incorrect-call-count
-				                              :position ["t_line_number_reporting.clj" (+ line-number 5)]})
+				                              :failures (contains (contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]})) })
 			                     (contains {:type :mock-expected-result-failure
 			                    	          :position ["t_line_number_reporting.clj" (+ line-number 3)]})])))
 
-  (def line-number 107)
+  (def line-number 105)
   (after-silently
    (fact
      (favorite-animal-only-name) => "betsy"
@@ -112,20 +110,18 @@
        (name (favorite-animal)) => "betsy"))
    (fact
      @reported => (just [
-              ;; This used to produce a :mock-argument-match-failure because of
-              ;; (name "fred"). Since the name function actually exists, it's
-              ;; used.
+              (contains {:type :mock-argument-match-failure
+                         :position  ["t_line_number_reporting.clj" (+ line-number 5)]})
 			  (contains {:type :mock-incorrect-call-count
-				     :position ["t_line_number_reporting.clj" (+ line-number 5)]
-				     :expected-call "(name ...favorite-animal-value-1...)"})
-			  (contains {:type :mock-incorrect-call-count
-				     :position ["t_line_number_reporting.clj" (+ line-number 5)]
-				     :expected-call "(favorite-animal)"})
+                   :failures (just [(contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]
+				                                       :expected-call "(name ...favorite-animal-value-1...)"})
+                                    (contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]
+                                               :expected-call "(favorite-animal)"})]  )})
 			  (contains {:type :mock-expected-result-failure
 				     :position ["t_line_number_reporting.clj" (+ line-number 3)]})])))
 
 
-  (def line-number 128)
+  (def line-number 125)
   (after-silently
    (fact
      (favorite-animal-one-call) => "betsy"
@@ -134,14 +130,14 @@
        (name (favorite-animal 2)) => "jake")) ;; a folded prerequisite can have two errors.
    (fact
      @reported => (just [(contains {:type :mock-incorrect-call-count
-				     :position ["t_line_number_reporting.clj" (+ line-number 6)]
-				     :expected-call "(name ...favorite-animal-value-2...)"})
-                         (contains {:type :mock-incorrect-call-count
-				     :position ["t_line_number_reporting.clj" (+ line-number 6)]
-				     :expected-call "(favorite-animal 2)"})
-			  pass ]))))
+                                    :failures (just [(contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]
+				                                                       :expected-call "(name ...favorite-animal-value-2...)"})
+                                                     (contains {:position ["t_line_number_reporting.clj" (+ line-number 5)]
+                                                                :expected-call "(favorite-animal 2)"})  ])})
+                         pass]))))
 
-(def line-number-separate 144)
+
+  (def line-number-separate 140)
 (unfinished outermost middlemost innermost)
 (in-separate-namespace
 (background (outermost) => 2)
@@ -161,18 +157,18 @@
 ;; future facts
 (after-silently
  (future-fact "text")
- (fact @reported => (just (contains {:position '("t_line_number_reporting.clj" 163)
-			                               :description "text" }))))
+ (fact @reported => (just (contains {:position '("t_line_number_reporting.clj" 159)
+			                               :description ["text"] }))))
 
 (after-silently
  (pending-fact (+ 1 1) => 2)
- (fact @reported => (just (contains {:position '("t_line_number_reporting.clj" 168)
-		                               	:description nil }))))
+ (fact @reported => (just (contains {:position '("t_line_number_reporting.clj" 164)
+		                               	:description [nil] }))))
 
 
 ;; Improved error handling for pathological cases
 
-(def line-number-pathological 175)
+(def line-number-pathological 171)
 ;; statements without lists guess 1+ most recent"
 (after-silently
  (fact 
@@ -201,7 +197,7 @@
                                                  (+ line-number-pathological 23)]})])))
 
 
-(def facts-position 204)
+(def facts-position 200)
 (after-silently
  (facts "... also use fallback line number"
    1 => even?  
@@ -221,7 +217,7 @@
 
 ;; Line number reporting for variant expect arrows
 
-(def variant-position 224)
+(def variant-position 220)
 (after-silently 
  (fact
    (+ 1 1) =deny=> 2
@@ -235,7 +231,7 @@
                                                 (+ variant-position 5)]}))))
 
 
-(def tabular-position 238)
+(def tabular-position 234)
 (after-silently
  (tabular
   (fact (inc ?n) => ?n)
@@ -249,3 +245,4 @@
                       (contains {:position ["t_line_number_reporting.clj"
                                             (+ tabular-position 3)]
                                  :binding-note "[?n 2\n                           ?comment \"2\"]"}))))
+)

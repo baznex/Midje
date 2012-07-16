@@ -1,13 +1,14 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.t-sweet
-  (:use [midje.sweet])
-  (:use [midje.test-util]))
+  (:use midje.sweet
+        midje.util
+        midje.test-util)
+  (:require midje.internal-ideas.t-fakes))
 
 (fact "all of Midje's public, API-facing vars have docstrings"
   (map str (remove (comp :doc meta) (vals (ns-publics 'midje.sweet)))) => []
   (map str (remove (comp :doc meta) (vals (ns-publics 'midje.semi-sweet)))) => []
-  (map str (remove (comp :doc meta) (vals (ns-publics 'midje.unprocessed)))) => [])
+  (map str (remove (comp :doc meta) (vals (ns-publics 'midje.unprocessed)))) => []
+  (map str (remove (comp :doc meta) (vals (ns-publics 'midje.util)))) => [])
 
 (after-silently ; failing
  (fact (+ 1 1) => 3)
@@ -27,24 +28,13 @@
    (+ 1 1) => 2)
  (fact @reported => (just bad-result
                           (contains {:type :future-fact
-                                     :description "(+ 1 \"1\")"})
+                                     :description [nil "(+ 1 \"1\")"]})
                           pass)))
 
 (defn number [] )
 (defn two-numbers [] 
   (+ (number) (number)))
 
-(letfn [(stream-overflow-exception? [captured-throwable]
-          (= "Your =stream=> ran out of values." (.getMessage (.throwable captured-throwable))))]
-
-  (after-silently ;; streams give sensible error when they run dry
-    (fact
-      (two-numbers) => 2
-      (provided
-        (number) =streams=> [1]))
-  
-    (fact @reported => (just (contains {:type :mock-expected-result-failure
-                                        :actual stream-overflow-exception? } )))))
 
 (letfn [(throws-arrow-exception? [captured-throwable]
           (= "Right side of =throws=> should extend Throwable." (.getMessage (.throwable captured-throwable))))]
@@ -161,20 +151,20 @@
   (facts "A"
     (fact "B"
       (+ 1 2) => 1))
-  (fact @reported => (one-of (contains {:description "A - B"} ))))
+  (fact @reported => (one-of (contains {:description ["A" "B"]} ))))
 
 (after-silently
   (facts "level 1"
     (fact "level 2"
       (fact "level 3"
         (throw (Exception. "BOOM")) => anything)))
-  (fact @reported => (one-of (contains {:description "level 1 - level 2 - level 3"} )))) 
+  (fact @reported => (one-of (contains {:description ["level 1" "level 2" "level 3"]} )))) 
 
 (after-silently
   (facts "about mathemtics"
     (future-fact "do in future"
       nil => 1))
-  (fact @reported => (one-of (contains {:description "about mathemtics - do in future"} ))))
+  (fact @reported => (one-of (contains {:description ["about mathemtics" "do in future"]} ))))
 
 ;; Background prerequisites
 (unfinished check-f check-g check-h)
@@ -253,7 +243,7 @@
    (provided
      (called 1) => 1 :times 2))
  (fact @reported => (contains (contains {:type :mock-incorrect-call-count
-                             :actual-count 1}))))
+                                         :failures (contains (contains {:actual-count 1}))}))))
   
 (after-silently
  (fact
@@ -261,7 +251,7 @@
    (provided
      (called 1) => 1 :times (range 2 8)))
  (fact @reported => (contains (contains {:type :mock-incorrect-call-count
-                             :actual-count 1}))))
+                                         :failures (contains (contains {:actual-count 1}))}))))
  
 
 (after-silently
@@ -270,21 +260,16 @@
    (provided
      (called 1) => 1 :times even?))
  (fact @reported => (contains (contains {:type :mock-incorrect-call-count
-                                         :actual-count 3}))))
+                                         :failures (contains (contains {:actual-count 3}))}))))
   
 (fact
   (do (called 1) (called 1)) => 1
   (provided
     (called 1) => 1))
 
-(defn f [x] (inc x))
-(defn g [x] (* x (f x)))
 
-(future-fact "can fake vars directly"
-  (#'g 2) => 6
-  (provided
-    (#'f 2) => 2))
-  
+
+
 ;; Possibly the most common case
 (after-silently
  (fact
@@ -292,7 +277,7 @@
    (provided
      (called irrelevant) => 1 :times 0))
  (fact @reported => (contains (contains {:type :mock-incorrect-call-count
-                                         :actual-count 1}))))
+                                         :failures (contains (contains {:actual-count 1}))}))))
     
 
 (def #^:dynamic *fact-retval* (fact
@@ -304,7 +289,7 @@
 
 (def #^:dynamic  *fact-retval* (fact
                                 (+ 1 1) => 2
-                                (midje.internal-ideas.report/note-failure-in-fact)
+                                (midje.ideas.reporting.report/note-failure-in-fact)
                                 "some random return value"))
 (fact "fact returns false on failure"
   *fact-retval* => false)
@@ -316,17 +301,89 @@
 (fact "a fact's return value is not affected by previous failures"
   *fact-retval* => true)
 
-
 (defn a [])
 (defn b [] (a))
 
-(fact "two ways prerequisites can throw throwables"
+(fact "prerequisites can throw throwables"
   (b) => (throws Exception)
   (provided 
-    (a) =throws=> (Exception.))
+    (a) =throws=> (Exception.)))
 
-  (b) => (throws Exception)
+
+;; Tool creators can hook into the maps generated by the Midje compilation process
+
+(unfinished foo)
+(defn-call-countable noop-fn [& args] :do-nothing)
+(binding [midje.semi-sweet/*expect-checking-fn* noop-fn]
+  (fact :ignored => :ignored
+    (provided
+      (foo) => :bar)))
+(fact @noop-fn-count => 1)
+
+
+;; In prerequisites, functions can be referred to by vars as well as symbols
+
+;;; These functions are duplicated in t_fakes.clj, since the whole
+;;; point of allowing vars is to refer to private vars in another
+;;; namespace. To make sure there's no mistakes, these local versions
+;;; are so tagged.
+;;; 
+(defn var-inc-local [x] (inc x))
+(defn var-inc-user-local [x] (* x (var-inc-local x)))
+(defn var-twice-local []
+  (var-inc-local (var-inc-local 2)))
+
+(fact "can fake private remote-namespace functions using vars"
+  (#'midje.internal-ideas.t-fakes/var-inc-user 2) => 400
   (provided
-    (a) =streams=> [(throw (Exception.))]))
+    (#'midje.internal-ideas.t-fakes/var-inc 2) => 200))
 
+(fact "and can fake local functions using vars"
+  (#'var-inc-user-local 2) => 400
+  (provided
+    (#'var-inc-local 2) => 200))
 
+(fact "default prerequisites work with vars"
+  (binding [midje.config/*allow-default-prerequisites* true]
+    (#'midje.internal-ideas.t-fakes/var-twice) => 201
+    (provided
+      (#'midje.internal-ideas.t-fakes/var-inc 2) => 200)))
+
+;;; Unfolded prerequisites
+
+(fact "vars also work with unfolded prerequisites"
+  (var-twice-local) => 201
+  (provided
+   (var-inc-local (var-inc-local 2))  => 201))
+
+(defn here-and-there []
+  (var-inc-local (#'midje.internal-ideas.t-fakes/var-inc 2)))
+  
+(fact "vars also work with unfolded prerequisites"
+  (here-and-there) => 201
+  (provided
+   (var-inc-local (#'midje.internal-ideas.t-fakes/var-inc 2)) => 201))
+
+(defn there-and-here []
+  (#'midje.internal-ideas.t-fakes/var-inc (var-inc-local 2)))
+  
+(fact "vars also work with unfolded prerequisites"
+  (there-and-here) => 201
+  (provided
+   (#'midje.internal-ideas.t-fakes/var-inc (var-inc-local 2)) => 201))
+
+(defn over-there-over-there-spread-the-word-to-beware []
+  (#'midje.internal-ideas.t-fakes/var-inc
+   (#'midje.internal-ideas.t-fakes/var-inc 2)))
+  
+(fact "vars also work with unfolded prerequisites"
+  (over-there-over-there-spread-the-word-to-beware) => 201
+  (provided
+   (#'midje.internal-ideas.t-fakes/var-inc
+    (#'midje.internal-ideas.t-fakes/var-inc 2)) => 201))
+
+(after-silently
+ (future-fact "exceptions do not blow up"
+   "foo" => odd?)
+ (future-fact @reported => (just bad-result)))
+   

@@ -1,19 +1,17 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Code to be run before, after or around facts. Also, 
             prerequisites that pertain to a group of facts."} 
   midje.ideas.background
-  (:use [midje.ideas.arrows :only [is-start-of-checking-arrow-sequence? take-arrow-sequence]]
-    [midje.ideas.metaconstants :only [define-metaconstants]]
-    [midje.ideas.prerequisites :only [metaconstant-prerequisite? prerequisite-to-fake]]
-    [midje.internal-ideas.fakes :only [fake? tag-as-background-fake with-installed-fakes]]
-    [midje.internal-ideas.wrapping :only [for-wrapping-target? with-wrapping-target]]
-    [midje.util.form-utils :only [first-named? map-first pred-cond separate-by
-                                  symbol-named? translate-zipper]]
-    [midje.util.laziness :only [eagerly]]
-    [midje.util.thread-safe-var-nesting :only [namespace-values-inside-out 
-                                               with-pushed-namespace-values]]
-    [utilize.seq :only [separate]])
+  (:use [midje.ideas.arrows :only [start-of-checking-arrow-sequence? take-arrow-sequence]]
+        [midje.ideas.metaconstants :only [define-metaconstants]]
+        [midje.ideas.prerequisites :only [metaconstant-prerequisite? prerequisite-to-fake]]
+        [midje.internal-ideas.fakes :only [fake? tag-as-background-fake with-installed-fakes]]
+        [midje.internal-ideas.wrapping :only [for-wrapping-target? with-wrapping-target]]
+        [midje.util.form-utils :only [first-named? map-first pred-cond separate-by
+                                      symbol-named? translate-zipper]]
+        [midje.util.laziness :only [eagerly]]
+        [midje.util.thread-safe-var-nesting :only [namespace-values-inside-out 
+                                                   with-pushed-namespace-values]]
+        [utilize.seq :only [separate]])
   (:require [clojure.zip :as zip] 
             [midje.util.unify :as unify]))
 
@@ -43,7 +41,7 @@
     "Code to run before a given wrapping target (:facts, :contents, :checks).
   Can take an optional keyword argument :after, for any code to run afterward.
   Used with background and against-background"
-    [wrapping-target before-form & {:keys [after]}]
+    [_wrapping-target_ before-form & {:keys [after]}]
     (ensure-correct-form-variable `(try
                                      ~before-form
                                      ?form
@@ -52,7 +50,7 @@
   (defmacro after 
     "Code to run after a given wrapping target (:facts, :contents, :checks).
   Used with background and against-background"
-    [wrapping-target after-form]
+    [_wrapping-target_ after-form]
     (ensure-correct-form-variable `(try ?form (finally ~after-form))))
 
   (defmacro around 
@@ -65,7 +63,7 @@
                       (print a))) 
      
   Used with background and against-background"
-    [wrapping-target around-form]
+    [_wrapping-target_ around-form]
     (ensure-correct-form-variable around-form)))
 
 (defn seq-headed-by-setup-teardown-form? [forms]
@@ -80,21 +78,21 @@
       empty? 
       expanded
 
-      is-start-of-checking-arrow-sequence?
+      start-of-checking-arrow-sequence?
       (let [arrow-seq (take-arrow-sequence in-progress)]
         (recur (conj expanded (-> arrow-seq prerequisite-to-fake tag-as-background-fake))
-          (drop (count arrow-seq) in-progress)))
+               (drop (count arrow-seq) in-progress)))
 
       metaconstant-prerequisite?
       (let [arrow-seq (take-arrow-sequence in-progress)]
         (recur (conj expanded (-> arrow-seq prerequisite-to-fake))
-          (drop (count arrow-seq) in-progress)))
+               (drop (count arrow-seq) in-progress)))
 
       seq-headed-by-setup-teardown-form?
       (recur (conj expanded (first in-progress))
-        (rest in-progress)))))
+             (rest in-progress)))))
 
-(defn- ^{:testable true } state-wrapper [[_before-after-or-around_ wrapping-target & _  :as state-description]]
+(defn- ^{:testable true } state-wrapper [[_before-after-or-around_ wrapping-target & _ :as state-description]]
   (with-wrapping-target
     (macroexpand-1 (map-first #(symbol "midje.ideas.background" (name %)) state-description))
     wrapping-target))
@@ -122,9 +120,9 @@
 (defn against-background-contents-wrappers [[_against-background_ background-forms & _]]
   (filter (for-wrapping-target? :contents ) (background-wrappers background-forms)))
 
-(defn against-background-children-wrappers [[_against-background_ background-forms & _]]
+(defn against-background-facts-and-checks-wrappers [[_against-background_ background-forms & _]]
   (remove (for-wrapping-target? :contents ) (background-wrappers background-forms)))
 
 (defn surround-with-background-fakes [forms]
   `(with-installed-fakes (background-fakes)
-     (do ~@forms)))
+     ~@forms))

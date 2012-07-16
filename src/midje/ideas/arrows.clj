@@ -1,10 +1,8 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Arrows either indicate a form of expected result, or a stubbed prerequisite value."}
   midje.ideas.arrows
   (:use midje.ideas.arrow-symbols
         [clojure.set :only [union]]
-        [midje.util treelike namespace])
+        [midje.util form-utils treelike namespace])
   (:require [clojure.zip :as zip]))
 
 ;; Arrow groupings
@@ -13,16 +11,22 @@
 (def fake-arrows #{=> =contains=> =streams=> =throws=>})
 (def all-arrows (union expect-arrows fake-arrows))
 
+(defn leaf-expect-arrows [nested-form]
+  (let [named-form-leaves (map name (filter named? (flatten nested-form)))]
+    (filter expect-arrows named-form-leaves)))
+
+(defn leaves-contain-arrow? [nested-form]
+  (not (empty? (leaf-expect-arrows nested-form))))
 
 ;; Recognizing
 
-(defmulti is-start-of-checking-arrow-sequence? tree-variant)
+(defmulti start-of-checking-arrow-sequence? tree-variant)
 
-(defmethod is-start-of-checking-arrow-sequence? :zipper [loc]
+(defmethod start-of-checking-arrow-sequence? :zipper [loc]
   (and (zip/right loc)
        (matches-symbols-in-semi-sweet-or-sweet-ns? expect-arrows (zip/right loc))))
 
-(defmethod is-start-of-checking-arrow-sequence? :form [form]
+(defmethod start-of-checking-arrow-sequence? :form [form]
   (and (sequential? form)
        (matches-symbols-in-semi-sweet-or-sweet-ns? expect-arrows (second form))))
 

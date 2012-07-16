@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.ideas.t-metaconstants
   (:use midje.ideas.metaconstants
         [midje sweet test-util]
@@ -8,7 +6,7 @@
   (:import midje.ideas.metaconstants.Metaconstant))
 
 
-;;; Notation
+;;; Notation
 
 (tabular 
  (fact "metaconstants begin and end with dots"
@@ -45,7 +43,7 @@
     (--v-- 1 2 3) => 8))
 
 
-;;; About the datatype
+;;; About the datatype
 
 (let [mc (Metaconstant. '...name... {})]
   (fact "Metaconstants print as their name"
@@ -107,7 +105,7 @@
   (str .mc.) => ".mc."
   (pr-str .mc.) => ".mc.")
 
-;;;  Use with prerequisite functions
+;;;  Use with prerequisite functions
 
 
 (unfinished m)
@@ -149,7 +147,7 @@
     (metaconstant-for-form '(metaconstant-for-form))
     => '...metaconstant-for-form-value-1...))
 
-;;; Metaconstants-that-contain: as used in code
+;;; Metaconstants-that-contain: as used in code
 
 (fact "all three types of lookup"
   (against-background --mc-- =contains=> {:a 5})

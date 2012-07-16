@@ -1,7 +1,6 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Various ways to define checkers."}
-  midje.checkers.defining)
+  midje.checkers.defining
+  (:use [midje.util.form-utils :only [pop-docstring pop-opts-map]]))
 
 (defn as-checker
   "Turns an already existing function into a checker. Checkers can be used 
@@ -13,9 +12,8 @@
           (let [metavars (merge {:midje/checker true :arglists `'~arglists}
                                 (when docstring {:doc docstring})
                                  attr-map)
-                name (vary-meta checker-name merge metavars)
-                checker-fn `(as-checker (fn ~checker-name ~@arglists+bodies))]
-            `(def ~name ~checker-fn)))
+                name (vary-meta checker-name merge metavars)]
+            `(def ~name (as-checker (fn ~checker-name ~@arglists+bodies)))))
 
         (working-with-arglists+bodies [checker-name docstring attr-map arglists+bodies]
           ;; Note: it's not strictly necessary to convert a single
@@ -33,20 +31,11 @@
   (defmacro defchecker
     "Like defn, but tags the variable created and the function it refers to
      as checkers. Checkers can be used to check fact results, as well as prerequisite calls."
-    {:arglists '([name docstring? attr-map? arglists arglists+bodies])}
-    [name & stuff]
-    (cond 
-      (and (string? (first stuff)) (map? (second stuff)))
-      (working-with-arglists+bodies name (first stuff) (second stuff) (drop 2 stuff))
-    
-      (map? (first stuff))
-      (working-with-arglists+bodies name nil (first stuff) (rest stuff))
-    
-      (string? (first stuff))
-      (working-with-arglists+bodies name (first stuff) {} (rest stuff))
-    
-      :else
-      (working-with-arglists+bodies name nil {} stuff))))
+    {:arglists '([name docstring? attr-map? bindings+bodies])}
+    [name & args]
+    (let [[docstring more-args] (pop-docstring args)
+          [attr-map bindings+bodies] (pop-opts-map more-args)]
+      (working-with-arglists+bodies name docstring attr-map bindings+bodies))))
 
 (defmacro checker
   "Creates an anonymous function tagged as a checker. Checkers can be used 

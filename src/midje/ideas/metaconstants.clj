@@ -1,9 +1,7 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "A notation that avoids confusion between what’s essential 
             about data and what’s accidental. A stand in for constant data."}
   midje.ideas.metaconstants
-  (:use [midje.util.form-utils :only [quoted? translate-zipper]]
+  (:use [midje.util.form-utils :only [translate-zipper fnref-symbol]]
         [midje.util.zip :only [skip-down-then-rightmost-leaf]]
         [midje.util.thread-safe-var-nesting :only [unbound-marker]]
         [midje.error-handling.exceptions :only [user-error]]
@@ -12,16 +10,22 @@
   (:require [clojure.zip :as zip]
             [midje.util.ecosystem :as ecosystem]))
 
+(defn- normalized-metaconstant* [dot-or-dash mc-symbol]
+  (let [re (re-pattern (str "^" dot-or-dash "+(.+?)" dot-or-dash "+$"))
+        three-dots-or-dashes (apply str (repeat 3 dot-or-dash))]
+    (-?>> mc-symbol 
+          name 
+          (re-matches re) 
+          second 
+          (format (str three-dots-or-dashes "%s" three-dots-or-dashes)))))
+
 (defn- normalized-metaconstant
-  "Turns '..m. to \"...m...\", or nil if mc-symbol isn't a valid metaconstant symbol"
+  "Turns '..m. to \"...m...\", '--m- to \"---m---\", or to 
+   nil if mc-symbol isn't a valid metaconstant symbol"
   [mc-symbol]
-  (let [normalize (fn [re metaconstant-format mc-symbol]
-                    (-?>> mc-symbol name (re-matches re) second (format metaconstant-format)))
-
-        dot-metaconstant  (partial normalize #"^\.+(.+?)\.+$" "...%s...")
-        dash-metaconstant (partial normalize #"^-+(.+?)-+$"   "---%s---")]
-
-    (->> mc-symbol ((juxt dot-metaconstant dash-metaconstant)) (find-first identity))))
+  (->> mc-symbol 
+       ((juxt (partial normalized-metaconstant* "\\.") (partial normalized-metaconstant* "-"))) 
+       (find-first identity)))
 
 (defn metaconstant-symbol? [x]
   (and (symbol? x)
@@ -30,7 +34,7 @@
 (deftype Metaconstant [name ^clojure.lang.Associative storage]
   Object
   (toString [this]
-            (.toString (.name this)))
+            (str (.name this)))
   (equals [^Metaconstant this that]
          (if (instance? (class this) that)
            (= (normalized-metaconstant (.name this)) (normalized-metaconstant (.name ^Metaconstant that)))
@@ -85,6 +89,9 @@
                    "If you have a compelling case for equality, please create an issue:"
                    ecosystem/issues-url)))))
 
+(defn merge-metaconstants [^Metaconstant mc1 ^Metaconstant mc2]
+  (Metaconstant. (.name mc1) (merge (.storage mc1) (.storage mc2))))
+
 (defmethod print-method Metaconstant [^Metaconstant o ^java.io.Writer w]
   (print-method (.name o) w))
 
@@ -103,11 +110,7 @@
 
 (defn metaconstant-for-form [[function-symbol & _ :as inner-form]]
   (let [swap-fn (fn [current-value function-symbol]
-                  (if-let [cur-val (current-value function-symbol)]
-                    (assoc current-value function-symbol (inc cur-val)) 
-                    (assoc current-value function-symbol 1)))
+                  (assoc current-value function-symbol ((fnil inc 0) (current-value function-symbol))))
         number ((swap! *metaconstant-counts* swap-fn function-symbol)
                   function-symbol)]
-    (symbol (format "...%s-value-%s..." (name function-symbol) number))))
-
-        
+    (symbol (format "...%s-value-%s..." (name (fnref-symbol function-symbol)) number))))

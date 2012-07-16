@@ -1,7 +1,6 @@
 (ns midje.checkers.collection-util
-  (:use [midje.util.form-utils :only [regex?]]
-        [midje.checkers.extended-equality :only [extended-fn?]]
-        [midje.checkers.chatty :only [as-chatty-falsehood]]))
+  (:use [midje.util.form-utils :only [extended-fn? regex?]]
+        [midje.checkers.extended-falsehood :only [as-data-laden-falsehood]]))
 
 (defn same-lengths? [actual expected]
   (= (count actual) (count expected)))
@@ -46,7 +45,7 @@
   "Produce a partially constructed chatty falsehood that contains
    a :notes key with the strings."
   [& strings ]
-  (as-chatty-falsehood {:notes strings}))
+  (as-data-laden-falsehood {:notes strings}))
 
 (defn try-re
   "Use the function (re-find or re-matches) to apply re to the thing.

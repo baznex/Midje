@@ -1,28 +1,30 @@
-;; -*- indent-tabs-mode: nil -*-
-
 ;;; This namespace is mainly responsible for converting particular macros
 ;;; into the arguments used by midje.unprocessed's `expect*`.
 
 (ns ^{:doc "Macros that provide less syntactic sugaring than those 
             from midje.sweet. midje.sweet is built on top of it."}
   midje.semi-sweet
+  (:refer-clojure :exclude [replace])
   (:use clojure.test
         midje.internal-ideas.fakes
         midje.internal-ideas.file-position
-        [midje.internal-ideas.fact-context :only [within-fact-context]]
+        [midje.internal-ideas.fact-context :only [nested-descriptions within-fact-context]]
         [midje.util debugging form-utils namespace]
-        [midje.error-handling validation-errors semi-sweet-validations]
+        midje.error-handling.validation-errors
+        midje.error-handling.semi-sweet-validations
         [midje.error-handling.exceptions :only [user-error]]
-        [midje.util.namespace :only [is-semi-sweet-keyword?]]
-        [midje.production-mode]
-        [clojure.pprint])
-  (:require [midje.cljs :as cljs]
-            [clojure.string :as str]))
-
+        [midje.util.namespace :only [semi-sweet-keyword?]]
+        [midje.util.ecosystem :only [line-separator]]
+        midje.production-mode
+        [clojure.algo.monads :only [domonad]]
+        clojure.pprint
+        [clojure.string :only [join replace]]
+        [midje.cljs :only [load-cljs cljs-eval]]
+        ))
 (immigrate 'midje.unprocessed)
 (immigrate 'midje.ideas.arrow-symbols)
 
-;;; Conversions to unprocessed form
+;;; Conversions to unprocessed form
 
 ;; I want to use resolve() to compare calls to fake, rather than the string
 ;; value of the symbol, but for some reason when the tests run, *ns* is User,
@@ -31,19 +33,21 @@
 ;;
 ;; FURTHERMORE, I wanted to use set operations to check for fake and not-called,
 ;; but those fail for reasons I don't understand. Bah.
-(defn- ^{:testable true } check-for-arrow [arrow]
-  (get {=> :check-match
-        =expands-to=> :check-match
-        =not=> :check-negated-match
-        =deny=> :check-negated-match} (name arrow)))
+(defn- ^{:testable true} check-for-arrow [arrow]
+  (condp = (name arrow) 
+    => :check-match
+    =expands-to=> :check-match
+    =not=> :check-negated-match
+    =deny=> :check-negated-match
+    nil))
 
 (defn ^{:private true} cljs-file->ns
   "given the cljs file name produce the cljs ns"
   [cljs-file]
   (-> cljs-file
-      (str/replace #"\.cljs" "")
-      (str/replace #"_" "-")
-      (str/replace #"/" ".")
+      (replace #"\.cljs" "")
+      (replace #"_" "-")
+      (replace #"/" ".")
       symbol))
 
 (defn ^{:private true} cljs-ns-meta
@@ -60,8 +64,8 @@
   [call-form]
   (if-let [[cljs-ns cljs-file] (cljs-ns-meta)]
     `(do
-       (cljs/load-cljs ~cljs-file) ; TODO: run only once for ns-- how?
-       (cljs/cljs-eval '~call-form '~cljs-ns))
+       (load-cljs ~cljs-file) ; TODO: run only once for ns-- how?
+       (cljs-eval '~call-form '~cljs-ns))
     call-form))
 
 (defmacro unprocessed-check
@@ -70,49 +74,50 @@
    failure. See 'expect*'."
   [call-form arrow expected-result overrides]
   `(merge
-    {:function-under-test (fn [] (process-call-form ~call-form))
+    {:description @nested-descriptions
+     :function-under-test (fn [] (process-call-form ~call-form))
      :expected-result ~expected-result
      :desired-check ~(check-for-arrow arrow)
      :expected-result-text-for-failures '~expected-result
-     :position (user-file-position)}
-    (hash-map-duplicates-ok ~@overrides)))
+     :position (user-file-position)
+     
+     ;; for Midje tool creators:
+     :call-form '~call-form
+     :arrow '~arrow }
+     (hash-map-duplicates-ok ~@overrides)))
 
-(letfn [(how-to-handle-check [call-form arrow & _]
-          (get {=> :expect*
-                =not=> :expect*
-                =deny=> :expect*
-                =expands-to=> :expect-macro*
-                =future=> :report-future-fact} (name arrow)))]
+(defmulti ^{:private true} expect-expansion (fn [_call-form_ arrow & _rhs_]
+                                              (name arrow)))
 
-  (defmulti ^{:private true} expect-expansion how-to-handle-check))
-
-(defmethod expect-expansion :expect*
+(def-many-methods expect-expansion [=> =not=> =deny=>]
   [call-form arrow expected-result fakes overrides]
   `(let [check# (unprocessed-check ~call-form ~arrow ~expected-result ~overrides)]
-     (expect* check# ~fakes)))
+     (midje.semi-sweet/*expect-checking-fn* check# ~fakes)))
 
-(defmethod expect-expansion :expect-macro*
-  [call-form arrow expected-result fakes overrides]
+(defmethod expect-expansion =expands-to=>
+  [call-form _arrow_ expected-result fakes overrides]
   (let [expanded-macro `(macroexpand-1 '~call-form)
         escaped-expected-result `(quote ~expected-result)]
     (expect-expansion expanded-macro => escaped-expected-result fakes overrides)))
 
-(defmethod expect-expansion :report-future-fact
-   [call-form arrow expected-result fakes overrides]
-   `(let [check# (unprocessed-check ~call-form ~arrow ~expected-result ~overrides)]
-      (within-fact-context ~(str call-form)  
-        (clojure.test/report {:type :future-fact
-                              :description (midje.internal-ideas.fact-context/nested-fact-description)
-                              :position (:position check#)}))))
+(defmethod expect-expansion =future=>
+  [call-form arrow expected-result _fakes_ overrides]
+  `(let [check# (unprocessed-check ~call-form ~arrow ~expected-result ~overrides)]
+     (within-fact-context ~(str call-form)
+       (clojure.test/report {:type :future-fact
+                             :description @midje.internal-ideas.fact-context/nested-descriptions
+                             :position (:position check#)}))))
 
-;;; Interface: unfinished
+;;; Interface: unfinished
 
 (letfn [(unfinished* [names]
           (macro-for [name names]
             `(do
                (defn ~name [& args#]
-                 (throw (user-error (str "#'" '~name 
-                                      " has no implementation. It's used as a prerequisite in Midje tests."))))
+                 (let [pprint# (partial cl-format nil "~S")]
+                   (throw (user-error (format "#'%s has no implementation, but it was called like this:%s(%s %s)" 
+                                        '~name line-separator '~name (join " " (map pprint# args#)))))))
+             
                ;; A reliable way of determining if an `unfinished` function has since been defined.
                (alter-meta! (var ~name) assoc :midje/unfinished-fun ~name))))]
 
@@ -130,7 +135,7 @@
 
 
 
-;;; Interface: production mode
+;;; Interface: production mode
 
 (defonce
   ^{:doc "True by default.  If set to false, Midje checks are not
@@ -139,7 +144,7 @@
   *include-midje-checks* true)
 
 
-;;; Interface: Main macros
+;;; Interface: Main macros
 
 (defmacro fake 
   "Creates a fake map that a particular call will be made. When it is made,
@@ -166,7 +171,7 @@
 
 (defn- ^{:testable true } a-fake? [x]
   (and (seq? x)
-       (is-semi-sweet-keyword? (first x))))
+       (semi-sweet-keyword? (first x))))
 
 (defmacro expect 
   "Run the call form, check that all the mocks defined in the fakes 
@@ -179,9 +184,13 @@
   {:arglists '([call-form arrow expected-result & fakes+overrides])}
   [& _]
   (when (user-desires-checking?)
-    (valid-let [[call-form arrow expected-result & fakes+overrides] (validate &form)
-                [fakes overrides] (separate-by a-fake? fakes+overrides)]
-      (when-valid fakes
-        (expect-expansion call-form arrow expected-result fakes overrides)))))
+    (domonad validate-m [[call-form arrow expected-result & fakes+overrides] (validate &form)
+                         [fakes overrides] (separate-by a-fake? fakes+overrides)
+                         _ (validate fakes)]
+      (expect-expansion call-form arrow expected-result fakes overrides))))
 
-
+(def ^{:dynamic true
+       :doc (str "For Midje tool creators. Hooks into Midje's internal compiler results.
+  Can be bound to a function with arglists like:" line-separator
+              "  " (:arglists (meta #'midje.unprocessed/expect*)))}
+  *expect-checking-fn* midje.unprocessed/expect*)

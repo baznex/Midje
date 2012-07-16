@@ -1,11 +1,9 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.ideas.t-facts
   (:use midje.ideas.facts
         midje.sweet midje.test-util)
   (:require [clojure.zip :as zip]))
 
-;; Translating sweet forms into their semi-sweet equivalent
+;; Translating sweet forms into their semi-sweet equivalent
 
 
 (fact "translating entire fact forms"
@@ -39,10 +37,10 @@
                                       (fake (m 1) => 33))]
     (to-semi-sweet form) => form))
 
-;; invalid if fact form is too short 
-(causes-validation-error #"There is no arrow in your fact form"
-  (fact))
+
+(each-causes-validation-error #"There is no arrow in your fact form"
+  (fact)
+  (fact "vector fact" [1 2 3 4] (contains 3)))
+
 (causes-validation-error #"There is no arrow in your facts form" 
   (facts 1))
-(causes-validation-error #"There is no arrow in your fact form" 
-  (fact "vector fact" [1 2 3 4] (contains 3)))

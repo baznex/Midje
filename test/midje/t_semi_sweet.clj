@@ -1,10 +1,9 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.t-semi-sweet
   (:use [clojure.test]  ;; This is used to check production mode with deftest.
         [midje.sweet]
         [midje.util form-utils]
-        [midje.test-util])
+        [midje.test-util]
+        midje.util)
   (:require [clojure.zip :as zip]))
 (expose-testables midje.semi-sweet)
  
@@ -59,9 +58,9 @@
         fake-streamed (fake (faked-function 0) =streams=> ['r1 'r2])]
 
     (fact "The basic parts"
-      (:lhs fake-0) => #'midje.t-semi-sweet/faked-function
+      (:var fake-0) => #'midje.t-semi-sweet/faked-function
       (:call-text-for-failures fake-1) => "(faked-function some-variable)"
-      (deref (:count-atom fake-0)) => 0)
+      (deref (:call-count-atom fake-0)) => 0)
 
     (fact "argument matching"
       (count (:arg-matchers fake-0)) => 0)
@@ -93,9 +92,9 @@
 (facts "about not-called"
   (let [fake-0 (not-called faked-function)]
 
-    (:lhs fake-0) => #'midje.t-semi-sweet/faked-function
+    (:var fake-0) => #'midje.t-semi-sweet/faked-function
     (:call-text-for-failures fake-0) => "faked-function was called."
-    @(:count-atom fake-0) => 0
+    @(:call-count-atom fake-0) => 0
     (:arg-matchers fake-0) => nil?
     ((:result-supplier fake-0)) => nil?))
 
@@ -159,17 +158,6 @@
               (fake (other-function 12) => 1))
       @reported => (just pass)))
 
-  (fact "call that matches none of the expected arguments"
-    (after-silently
-      (expect (+ (mocked-function 12) (mocked-function 33)) => "result irrelevant because of earlier failure"
-              (fake (mocked-function 12) => "hi"))
-     ;; At the moment, this does not produce a :mock-argument-match-failure. What it does
-     ;; is call the "unfinished" function, which blows up, producing a `bad-result` (the exception
-     ;; object). That's not horrible, especially at the semi-sweet level, but it does suggest
-     ;; that the implementation of the sweet behavior (where an unfinished function produces
-     ;; an argument-match failure) is fragile.
-     @reported =future=> (just (contains {:type :mock-argument-match-failure :actual '(33)})
-                        bad-result)))
 
   (fact "failure because one variant of multiply-mocked function is not called"
     (after-silently 
@@ -178,8 +166,19 @@
              (fake (mocked-function 22) => 2)
              (fake (mocked-function 33) => 3))
      @reported => (just (contains {:type :mock-incorrect-call-count
-                                   :expected-call "(mocked-function 33)" })
+                                   :failures (contains (contains {:expected-call "(mocked-function 33)"})) })
                         pass))) ; Right result, but wrong reason.
+
+  (fact "failure because one variant of multiply-mocked function is not called"
+    (after-silently
+      (expect (+ (mocked-function 12) (mocked-function 22)) => 3
+        (fake (mocked-function 12) => 1)
+        (fake (mocked-function 22) => 2)
+        (fake (mocked-function 33) => 3))
+      @reported => (just (contains {:type :mock-incorrect-call-count
+                                    :failures (contains (contains {:expected-call "(mocked-function 33)"})) })
+                     pass))) ; Right result, but wrong reason.
+
 
   (fact "multiple calls to a mocked function are perfectly fine"
     (expect (+ (mocked-function 12) (mocked-function 12)) => 2
@@ -205,7 +204,15 @@
             :expected-result expected
             (fake (mocked-function 1) => 5 :result-supplier "IGNORED"
                   :result-supplier (fn [] expected)))))
-    
+
+
+(defn backing-function [s] s)
+
+
+(fact "mocks can be partial: they fall through to any previously defined function"
+    (binding [midje.config/*allow-default-prerequisites* true]
+      (expect (str (backing-function "returned") " " (backing-function "overridden")) => "returned new value"
+              (fake (backing-function "overridden") => "new value"))))
 
 (facts "about checkers"
   (fact "expected results can be functions"
@@ -290,7 +297,7 @@
   (after-silently 
    (expect (+ 1 "3") =future=> 3)
    @reported => (one-of (contains {:type :future-fact
-                                   :description "about =future=> - (+ 1 \"3\")" }))))
+                                   :description ["about =future=>" "(+ 1 \"3\")"] }))))
 
 
 
@@ -305,3 +312,8 @@
                 @reported => (one-of (contains {:type :mock-expected-result-failure
                                                 :actual `(clojure.core/+ 100 200 1)
                                                 :expected `(clojure.core/- 100 200 1)}))))) 
+
+(fact "add form info to unprocessed check so tool creators can introspect them"
+  (unprocessed-check (+ 1 1) ..arrow.. 2 []) => (contains {:call-form '(+ 1 1) 
+                                                           :arrow ..arrow.. 
+                                                           :expected-result 2}))

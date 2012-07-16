@@ -1,33 +1,10 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Utility functions dealing with checking or tranforming forms."}
   midje.util.form-utils
   (:use [midje.util.treelike :only [tree-variant]]
+        [midje.util.backwards-compatible-utils :only [every-pred-m]]
         [clojure.set :only [difference]]
         [utilize.seq :only (first-truthy-fn)])
   (:require [clojure.zip :as zip]))
-
-(defn unique-argument-name []
-  (gensym 'symbol-for-destructured-arg))
-
-(defn single-arg-into-form-and-name [arg-form]
-  (cond (vector? arg-form)
-        (if (= :as (second (reverse arg-form)))  ; use existing as
-          [ arg-form (last arg-form)]
-          (let [as-symbol (unique-argument-name)]
-            [ (-> arg-form (conj :as) (conj as-symbol))
-              as-symbol]))
-    
-        (map? arg-form)
-        (if (contains? arg-form :as)
-          [ arg-form (:as arg-form)]
-          (let [as-symbol (unique-argument-name)]
-            [ (assoc arg-form :as as-symbol)
-              as-symbol]))        
-       
-        :else 
-        [arg-form arg-form]))
-
 
 (defn regex? [x]
   (= (class x) java.util.regex.Pattern))
@@ -37,6 +14,10 @@
   
 (defn record? [x]
   (and (map? x) (not (classic-map? x))))
+
+(defn extended-fn? [x]
+  (or (fn? x)
+    (= (class x) clojure.lang.MultiFn)))
   
 (defn symbol-named?
   "Is the thing a symbol with the name given by the string?"
@@ -55,6 +36,18 @@
   (quoted? (zip/node loc)))
 (defmethod quoted? :form [form]
   (first-named? form "quote"))
+
+
+(defn reader-list-form?
+  "True if the form is a parenthesized list of the sort the reader can return."
+  [form]
+  (or (list? form) (= (type form) clojure.lang.Cons)))
+
+(defn quoted-list-form?
+  "True if the form is a quoted list such as the reader might return"
+  [form]
+  (and (reader-list-form? form)
+       (quoted? form)))
 
 (defn preserve-type
   "If the original form was a vector, make the transformed form a vector too."
@@ -125,13 +118,9 @@
 
 (defn rotations
   "Returns a lazy seq of all rotations of a seq"
-  [x]
-  (if (seq x)
-    (map
-     (fn [n _]
-       (lazy-cat (drop n x) (take n x)))
-     (iterate inc 0) x)
-    (list nil)))
+  [coll]
+  (for [i (range 0 (count coll))]
+    (lazy-cat (drop i coll) (take i coll))))
 
 (defmacro pred-cond 
   "Checks each predicate against the item, returning the corresponding 
@@ -143,6 +132,17 @@
         :else `(if (~pred ~item)
                  ~result
                  (pred-cond ~item ~@preds+results))))
+
+(defn single-destructuring-arg->form+name [arg-form]
+  (let [as-symbol          (gensym 'symbol-for-destructured-arg)
+        snd-to-last-is-as? #(= :as (second (reverse %)))
+        has-key-as?        #(contains? % :as)]
+    (pred-cond arg-form
+      (every-pred-m vector? snd-to-last-is-as?) [arg-form (last arg-form)]
+      vector?                                   [(-> arg-form (conj :as) (conj as-symbol)) as-symbol]
+      (every-pred-m map? has-key-as?)           [arg-form (:as arg-form)]
+      map?                                      [(assoc arg-form :as as-symbol) as-symbol]
+      :else                                     [arg-form arg-form] )))
 
 (defmacro macro-for 
   "Macroexpands the body once for each of the elements in the 
@@ -171,7 +171,7 @@
     `(defmethod ~name ~dval ~args
        ~@body)))
 
-;; stolen from `useful`
+;;;; stolen from `useful`
 
 (defn var-name
   "Get the namespace-qualified name of a var."
@@ -196,8 +196,64 @@ metadata (as provided by def) merged into the metadata of the original."
   [dst src]
   `(alias-var (quote ~dst) (var ~src)))
 
+;;;;
+
 (defmacro to-thunks
-  "Takes a seq of unevaluated exprs. Returns a seq of no argument fns, that call each of the exprs in turn"
+  "Takes a seq of unevaluated exprs. Returns a seq of no argument fns, 
+  that call each of the exprs in turn"
   [exprs]
-  (into [] (for [x exprs]
-             `(fn [] ~x))))
+  (vec (for [x exprs]
+         `(fn [] ~x))))
+
+(defn pop-if
+  "Extracts optional arg (that we assume is present if the pred is true) from head of args"
+  [pred args]
+  (if (pred (first args))
+    [(first args) (rest args)]
+    [nil args]))
+
+(def pop-docstring 
+  ;; "Extracts optional map from head of args"
+  (partial pop-if string?))
+
+(def pop-opts-map 
+  ;; "Extracts optional docstring from head of args"
+  (partial pop-if map?))
+
+
+;; Function references in forms to expand. These are usually symbols
+;; but are sometimes the readable representation of vars: (var foo).
+(defn classify-function-reference [reference]
+  (pred-cond reference
+     symbol?        :symbol
+     sequential?    :var-form
+     :else          (throw (Exception. "Programmer error"))))
+
+(defmulti fnref-symbol classify-function-reference)
+(defmethod fnref-symbol :symbol [reference]
+  reference)
+(defmethod fnref-symbol :var-form [reference]
+  (second reference))
+
+(defmulti fnref-call-form classify-function-reference)
+(defmethod fnref-call-form :symbol [reference]
+  `(var ~reference))
+(defmethod fnref-call-form :var-form [reference]
+  reference)
+  
+(defmulti fnref-dereference-form classify-function-reference)
+(defmethod fnref-dereference-form :symbol [reference]
+  reference)
+(defmethod fnref-dereference-form :var-form [reference]
+  `(deref ~reference))
+
+;; Unlike other functions, this doesn't return homoiconic forms to
+;; substitute into macroexpansions. Instead, it returns the actual
+;; clojure.lang.Var object.
+(defmulti fnref-var-object classify-function-reference)
+(defmethod fnref-var-object :symbol [reference]
+  (resolve reference))
+(defmethod fnref-var-object :var-form [reference]
+  reference)
+  
+

@@ -1,11 +1,10 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.ideas.t-tabular
   (:use [midje.ideas.tabular :except [add-binding-note table-binding-maps]]
         [midje.ideas.metaconstants :only [metaconstant-symbol?]]
         [midje.error-handling.validation-errors]
         [midje sweet test-util]
-        [ordered.map :only (ordered-map)]))
+        [ordered.map :only (ordered-map)]
+        midje.util))
 
 (expose-testables midje.ideas.tabular)
 
@@ -98,22 +97,20 @@
    (let [s "string"]
      (validate '?forms []) => '?expected))
    ?forms                               ?expected
-   (tabular fact ?a ?b 1 1)              [nil fact [?a ?b 1 1]]
-   (tabular "string" fact ?a ?b 1 1)    ["string" fact [?a ?b 1 1]] )
+   (tabular fact ?a ?b 1 1)             [nil fact [?a ?b] [1 1]]
+   (tabular "string" fact ?a ?b 1 1)    ["string" fact [?a ?b] [1 1]] )
 
 
-(causes-validation-error #"There's no table\. \(Misparenthesized form\?\)"
+(each-causes-validation-error #"There's no table\. \(Misparenthesized form\?\)"
   (tabular
     (fact 
       (tabular-forms '?forms) => '?expected
       ?forms                       ?expect
-      [ fact table ]               [fact table])))
+      [ fact table ]               [fact table]))
 
-(causes-validation-error #"There's no table\. \(Misparenthesized form\?\)"
-  (tabular 
-    (fact nil => nil)))
+  (tabular
+    (fact nil => nil))
 
-(causes-validation-error #"There's no table\. \(Misparenthesized form\?\)"
   (tabular "doc string present"
     (fact nil => nil)))
 
@@ -214,19 +211,11 @@
 
 
 
-;; Util: table-binding-maps
+;; Util: table-binding-maps
  
 (fact "gets the bindings off fact table"
-  (table-binding-maps (list '?a  '?b '?result
-                              1   2   3), [])
-    => [ (ordered-map '?a 1, '?b 2, '?result 3) ])
- 
-(fact "won't count as table variables any specified local symbols"
-  (table-binding-maps (list '?a  
-                            '?result ; it thinks of '?result as just any old symbol
-                             1   
-                             3), ['?result])
-    => [ (ordered-map '?a '?result) (ordered-map '?a 1) (ordered-map '?a 3) ])
+  (table-binding-maps ['?a  '?b '?result] [1 2 3])
+  => [ (ordered-map '?a 1, '?b 2, '?result 3) ])
 
 (tabular (fact ?comment
            (let [line-no-free-original ?original
@@ -268,16 +257,16 @@
       (+ a b) => result)
     
       a    b   result
-      2    4   999     )  ;; WRONG!!
-  (fact @reported => (one-of (contains {:description "table of results - add stuff"} ))))
+      2    4   999     )  ;; PURPOSELY FAIL
+  (fact @reported => (one-of (contains {:description ["table of results" "add stuff"]} ))))
 
 (after-silently
   (tabular "table of results"
     (fact (+ a b) => result)
     
       a    b   result
-      2    4   999     )  ;; WRONG!!
-  (fact @reported => (one-of (contains {:description "table of results"} ))))
+      2    4   999     )  ;; PURPOSELY FAIL 
+  (fact @reported => (one-of (contains {:description ["table of results" nil]} ))))
 
 (after-silently
   (tabular
@@ -285,5 +274,5 @@
       (+ a b) => result)
     
       a    b   result
-      2    4   999     )  ;; WRONG!!
-  (fact @reported => (one-of (contains {:description "add stuff"} ))))
+      2    4   999     )  ;; PURPOSELY FAIL
+  (fact @reported => (one-of (contains {:description [nil "add stuff"]} ))))
