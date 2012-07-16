@@ -1,9 +1,6 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.t-unprocessed
-  (:use clojure.test)
-  (:use [midje.unprocessed])
-  (:use [midje.test-util]))
+  (:use midje.sweet
+        midje.test-util))
 
 
 ;;; Everything is tested indirectly through semi-sweet, including some of

@@ -1,9 +1,7 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.internal-ideas.t-file-position
   (:use [midje.internal-ideas.file-position]
         [midje sweet test-util]
-        [midje.ideas.arrows :only [is-start-of-checking-arrow-sequence?]])
+        [midje.ideas.arrows :only [start-of-checking-arrow-sequence?]])
   (:require [clojure.zip :as zip]))
 
 (defn this-file [line-number] 
@@ -18,7 +16,7 @@
 ;; came before sweet-mode and its use of the alternate method of determining file position.
 ;; That alternate could be back-ported to (fake) and (expect) -- it's less accurate, though.
 
-(def line-marker-1 21)
+(def line-marker-1 19)
 (let [position (user-file-position)]
   (fact "you can capture the filename/linenumber of a code line"
     position => (this-file (+ line-marker-1 1))))
@@ -70,32 +68,32 @@
   "Typical case is form on left. (f 1) => 5"
   (let [form `( ~(at-line 33 '(f 1)) => 5)
         loc (-> form zip/seq-zip zip/down)]
-    loc => is-start-of-checking-arrow-sequence?
+    loc => start-of-checking-arrow-sequence?
     (arrow-line-number (zip/right loc)) => 33)
 
   "When form on the left is has no line, check right: ...a... => (exactly 1)"
   (let [form `( ...a... => ~(at-line 33 '(exactly 1)))
         loc (-> form zip/seq-zip zip/down)]
-    loc => is-start-of-checking-arrow-sequence?
+    loc => start-of-checking-arrow-sequence?
     (arrow-line-number (zip/right loc)) => 33)
 
   "If both sides have line numbers, the left takes precedence: (f 1) => (exactly 1)"
   (let [form `( ~(at-line 33 '(f 1)) => ~(at-line 34 '(exactly 1)))
         loc (-> form zip/seq-zip zip/down)]
-    loc => is-start-of-checking-arrow-sequence?
+    loc => start-of-checking-arrow-sequence?
     (arrow-line-number (zip/right loc)) => 33)
 
   "If neither side has a line number, look to the left and add 1: (let [a 2] a => b)"
   (let [form `( (let ~(at-line 32 '[a 2]) a => b))
         loc (-> form zip/seq-zip zip/down zip/down zip/right zip/right)]
-    loc => is-start-of-checking-arrow-sequence?
+    loc => start-of-checking-arrow-sequence?
     (arrow-line-number (zip/right loc)) => 33)
 
   "Default result is is one plus the fallback line number."
   (set-fallback-line-number-from (at-line 333 '(previous form)))
   (let [form '(1 => 2)
         loc (-> form zip/seq-zip zip/down)]
-    loc => is-start-of-checking-arrow-sequence?
+    loc => start-of-checking-arrow-sequence?
     (arrow-line-number (zip/right loc)) => 334
 
     ;; incrementing happens more than once
@@ -212,3 +210,5 @@
       (take-last 2 expansion)
       => '(:position (midje.internal-ideas.file-position/line-number-known 33)))))
 
+(fact "Issue #117 - arrows inside quoted forms will not have :position info added"
+  '(fact foo => bar) => '(fact foo => bar))

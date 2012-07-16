@@ -3,7 +3,7 @@
 (ns midje.cljs
   (:require [cljs.closure :as cljsc]
             [cljs.repl :as repl]
-            [cljs.compiler :as comp]
+            [cljs.analyzer :as ana]
             [cljs.repl.rhino :as rhino]))
 
 (def ^:dynamic *env* (rhino/repl-env))
@@ -27,7 +27,7 @@
     (cljs-eval '(+ 1 2))
     (cljs-eval '(doubler 4) 'midje.cljs.basic)"
   [form & [cljs-ns]]
-  (let [env {:ns (@comp/namespaces comp/*cljs-ns*)
+  (let [env {:ns (@ana/namespaces ana/*cljs-ns*)
              :context :statement
              :locals {}}]
     (read-string

@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.checkers.t-simple
   (:use midje.sweet
         [midje.checkers.defining :only [checker?]]
@@ -121,6 +119,12 @@
   (throw-exception "msg") => (throws "msg" #(= "msg" (.getMessage %)) Error)
   (throw-exception "msg") => (throws "msg" Error #(= "msg" (.getMessage %))) )
 
+(fact "throws works with checkers that use Midje's extended notion of false"
+  (throw-exception "msg") => (throws #( (contains "m") (.getMessage %)))
+  (throw-exception "msg") =deny=> (throws #( (contains "message") (.getMessage %)))
+  ;; Following would be a user error, but the results should be helpful.
+  (throw-exception "msg") =deny=> (contains "msg"))
+
 (fact "`throws` can even accept multiple predicates"
   (throw-exception "msg") => (throws #(= "msg" (.getMessage %)) #(= "msg" (.getMessage %)) #(= "msg" (.getMessage %)))
   (throw-exception "msg") => (throws "msg" #(= "msg" (.getMessage %)) #(= "msg" (.getMessage %)) #(= "msg" (.getMessage %)))
@@ -129,10 +133,18 @@
 
 (fact "`throws` can accept multiple messages - imagine regexs for large error mesages"
   (throw-exception "msg") => (throws #"^m" #"g$")
-  (throw-exception "msg") => (throws Error #"^m" #"g$"))
+  (throw-exception "msg") => (throws Error #"^m" #"g$")
+  ;; Note that both regexps should match.
+  (throw-exception "msg") =deny=> (throws Error #"m" #"h"))
 
 (fact "`throws` matches any exception that is an instance of expected"
   (throw (NullPointerException.)) => (throws Exception))
+
+(after-silently
+ (fact "`throws` fails when not given an exception"
+   1 => (throws Exception))
+ (fact
+   @reported => (just checker-fails)))
 
 ;; Unexpected exceptions
 (after-silently
@@ -142,4 +154,3 @@
    (throw-exception "throws Error") => truthy)
  (fact
    @reported => (three-of checker-fails)))
-

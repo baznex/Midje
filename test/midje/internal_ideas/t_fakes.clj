@@ -1,14 +1,12 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns midje.internal-ideas.t-fakes
   (:use [midje sweet test-util]
-        [midje.internal-ideas.fakes :except [mockable-funcall? 
-  unfolding-step merge-metaconstant-bindings
-  data-fakes-to-metaconstant-bindings binding-map-with-function-fakes unique-vars
-  call-faker best-call-action ]]
+        [midje.internal-ideas.fakes :except [mockable-funcall? unfolding-step merge-metaconstant-bindings 
+                                             unique-vars handle-mocked-call best-call-action ]]
         [midje.ideas.metaconstants :only [metaconstant-for-form]]
         [utilize.seq :only (find-first only)]
-        [midje.test-util])
+        [midje.test-util]
+        midje.util
+        clojure.pprint)
   (:import midje.ideas.metaconstants.Metaconstant))
 
 (expose-testables midje.internal-ideas.fakes)
@@ -39,26 +37,18 @@ odd?                   odd?            TRUTHY
 odd?                   3               falsey)
 
 
-
 (declare f g)
-(fact "unique variables can be found in fakes"
-  (let [fakes [ (fake (f 1) => 2)
-                (fake (f 2) => 4)
-                (fake (g) => 3)] ]
-    (unique-vars fakes) => (contains [#'f #'g] :in-any-order))
-  "Same applies to data-fakes"
-  (let [fakes [ (data-fake ...f... => {:a 2})
-                (data-fake ...f... => {:b 4})
-                (data-fake ...g... => {:d 4})] ]
-    (unique-vars fakes) => (contains [#'...f... #'...g...] :in-any-order)))
 
-
-
-(fact "binding maps contain functions that increment a call count"
-  (let [fake (fake (f 1) => 3)
-        result-map (binding-map [fake])]
-    ( (result-map #'f) 1) => 3
-    (fake-count fake) => 1))
+(tabular 
+  (fact "binding maps contain functions that increment a call count"
+    (let [fake (fake (?function-reference 1) => 3)
+          result-map (binding-map [fake])]
+      ( (result-map #'f) 1) => 3
+      @(:call-count-atom fake) => 1))
+  ?function-reference
+         f
+        #'f
+        )
 
 (fact "binding maps can also contain Metaconstants to assign"
   (let [data-fakes [(data-fake ...mc... =contains=> {:a 1, :b ...even...})
@@ -72,13 +62,13 @@ odd?                   3               falsey)
         result-map (binding-map fakes)]
 
     ( (result-map #'f) 1) => 3
-    (map fake-count fakes) => [1 0]))
+    (map #(deref (:call-count-atom %)) fakes) => [1 0]))
 
 
 
 
 (tabular (fact "The number of calls can be described"
-           (let [fake-fake {:count-atom (atom ?actual-count),
+           (let [fake-fake {:call-count-atom (atom ?actual-count),
                             :type ?type
                             :times ?specified-count}]
            (call-count-incorrect? fake-fake) => ?expected))
@@ -115,84 +105,91 @@ odd?                   3               falsey)
 (facts "about result suppliers used"
   "returns identity for =>"
   (let [arrow "=>"]
-    ((make-result-supplier arrow [1 2 3])) => [1 2 3])
+    ((fn-fake-result-supplier arrow [1 2 3])) => [1 2 3])
              
   "returns stream for =streams=>"
-  (let [supplier (make-result-supplier "=streams=>" [1 2 3])]
+  (let [supplier (fn-fake-result-supplier "=streams=>" [1 2 3])]
     (supplier) => 1
     (supplier) => 2
     (supplier) => 3))
 
-(unfinished called)
-
-(defn caller []
-  (try
-    (called)
-    (catch Exception e nil))
-  (try
-    (called)
-    (catch Exception e nil))
-  (called))
-
-(fact "=streams=> makes thunks of each item on right hand side"
-  (caller) => 7
-  (provided
-    (called) =streams=> [(throw (Exception. "first!")) (throw (Exception. "second!")) 7]))
-
 
 ;;; Handling of default values for fakes
 
-;; In this example, one call to `internal` is faked and one is left alone.
+(binding [midje.config/*allow-default-prerequisites* true]
 
-(defn internal [x] 33)
-(defn external [x] (+ (internal x) (internal (inc x))))
+  ;; In this example, one call to `internal` is faked and one is left alone.
 
-(fact "calls not mentioned in prerequisites are passed through to real code"
-  (external 1) => 0
-  (provided
-    (internal 1) => -33))
+  (defn internal [x] 33)
+  (defn external [x] (+ (internal x) (internal (inc x))))
 
-
-;; The same thing can be done with clojure.core functions
-
-(defn double-partition [first-seq second-seq]
-  (concat (partition-all 1 first-seq) (partition-all 1 second-seq)))
-
-(fact (double-partition [1 2] [3 4]) => [ [1] [2] [3] [4] ])
-
-(fact
-  (double-partition [1 2] ..xs..) => [[1] [2] [..x1..] [..x2..]]
-  (provided (partition-all 1 ..xs..) => [ [..x1..] [..x2..] ]))
+  (fact "calls not mentioned in prerequisites are passed through to real code"
+    (external 1) => 0
+    (provided
+      (internal 1) => -33))
 
 
-;; However you can't override functions that are used by Midje itself
+  ;; The same thing can be done with clojure.core functions
 
-(defn all-even? [xs] (every? even? xs))
+  (defn double-partition [first-seq second-seq]
+    (concat (partition-all 1 first-seq) (partition-all 1 second-seq)))
 
-(after-silently 
-  (fact "get a user error from nested call to faked `every?`"
+  (fact (double-partition [1 2] [3 4]) => [ [1] [2] [3] [4] ])
+
+  (fact
+    (double-partition [1 2] ..xs..) => [[1] [2] [..x1..] [..x2..]]
+    (provided (partition-all 1 ..xs..) => [ [..x1..] [..x2..] ]))
+  
+
+  ;; However you can't override functions that are used by Midje itself
+  ;; These are reported thusly:
+
+  (defn message-about-mocking-midje-functions [reported]
+    (let [important-error
+          (find-first #(= (:type %) :mock-expected-result-functional-failure)
+                      reported)]
+      (and important-error
+           (.getMessage (.throwable (:actual important-error))))))
+  
+  (defn all-even? [xs] (every? even? xs))
+  
+  (after-silently 
+   (fact "get a user error from nested call to faked `every?`"
      (all-even? ..xs..) => truthy
      (provided (every? even? ..xs..) => true))
-  (let [important-error (find-first #(= (:type %) :mock-expected-result-functional-failure)
-                                     @reported)
-         text (.getMessage (.throwable (:actual important-error)))]
-     
-     (fact
+   (fact
+     (let [text (message-about-mocking-midje-functions @reported)]
        text => #"seem to have created a prerequisite"
        text => #"clojure\.core/every\?"
        text => #"interferes with.*Midje")))
 
+  ;; deref is a known special case that has to be detected differently
+  ;; than the one above.
 
-;; And inlined functions can't be faked
+  (def throwable-received nil)
+  
+  (try 
+    (macroexpand '(fake (deref anything) => 5))
+    (catch Throwable ex
+      ;; Weird things happen with atoms within a catch.
+      (alter-var-root #'throwable-received (constantly ex))))
+  
+  (fact
+    throwable-received =not=> nil?
+    (let [text (.getMessage throwable-received)]
+      text => #"deref"
+      text => #"interferes with.*Midje"))
 
-(defn doubler [n] (+ n n))
+  ;; And inlined functions can't be faked
 
-(after-silently
-(fact
-   (doubler 3) => 0
-   (provided
-     (+ 3 3) => 0))
-  (fact @reported => (validation-error-with-notes #"inlined")))
+  (defn doubler [n] (+ n n))
+
+  (after-silently
+   (fact
+     (doubler 3) => 0
+     (provided
+       (+ 3 3) => 0))
+   (fact @reported => (validation-error-with-notes #"inlined")))
 
 
 ;; How it works
@@ -229,14 +226,17 @@ odd?                   3               falsey)
     (def not-a-function 3)
     (def a-function (fn [x] x))
     (usable-default-function? (fake (not-a-function 3) => 1)) => falsey
-    (usable-default-function? (fake (a-function 3) => 1)) => truthy)
+    (usable-default-function? (fake (a-function 3) => 1)) => truthy
+    (usable-default-function? (fake (#'a-function 3) => 1)) => truthy)
   (fact "It may not have been marked `unfinished`"
     (unfinished tbd)
     (usable-default-function? (fake (tbd 3) => 1)) => falsey
+    (usable-default-function? (fake (#'tbd 3) => 1)) => falsey
     ;; However, an unfinished-then-redefined function is allowed
     (unfinished forget-to-remove)
     (def forget-to-remove (fn [x] (+ 3 (* 3 x))))
-    (usable-default-function? (fake (forget-to-remove 3) => 1)) => truthy)
+    (usable-default-function? (fake (forget-to-remove 3) => 1)) => truthy
+    (usable-default-function? (fake (#'forget-to-remove 3) => 1)) => truthy)
   (fact "It can be a multimethod"
     (defmulti multimethod type)
     (defmethod multimethod java.lang.String [x] "string me!")
@@ -245,31 +245,41 @@ odd?                   3               falsey)
 (defmulti multimethod type)
 (defmethod multimethod java.lang.String [x] "string me!")
 (fact "fakes can call default functions"
-  (call-faker #'multimethod ["some string"] [(fake (multimethod 4) => 3)])
+  (handle-mocked-call #'multimethod ["some string"] [(fake (multimethod 4) => 3)])
   => (multimethod "some string"))
 
 (fact "fakes keep track of their call counts"
   (let [fakes [(fake (f 1) => 3)
                (fake (g 1) => 4)
-               (fake (f 2) => 5)]
-        counts #(map fake-count fakes)]
-    (call-faker #'f [1] fakes)    (counts) => [1 0 0]
-    (call-faker #'f [1] fakes)    (counts) => [2 0 0]
-    (call-faker #'f [2] fakes)    (counts) => [2 0 1]
-    (call-faker #'g [1] fakes)    (counts) => [2 1 1]))
+               (fake (#'f 2) => 5)]
+        counts (fn [] 
+                 (map #(deref (:call-count-atom %)) fakes))]
+    (handle-mocked-call #'f [1] fakes)    (counts) => [1 0 0]
+    (handle-mocked-call #'f [1] fakes)    (counts) => [2 0 0]
+    (handle-mocked-call #'f [2] fakes)    (counts) => [2 0 1]
+    (handle-mocked-call #'g [1] fakes)    (counts) => [2 1 1]))
+)
+;; Closing the binding just above because Clojure 1.3 (and only
+;; Clojure 1.3) becomes confused about unbound vars that are defined
+;; inside of a `binding` scope. The binding in the fact below
+;; causes `bound?` to return true, but dereferencing the var still returns
+;; the magic value #<Unbound Unbound>. 
 
 (def unbound-var)
 (def bound-var 3)
 (def #^:dynamic rebound)
-     
+
+(binding [midje.config/*allow-default-prerequisites* true]
+
 (fact "fakes contain the value of their function-var at moment of binding"
   (:value-at-time-of-faking (fake (unbound-var) => 2)) => nil
   (:value-at-time-of-faking (fake (bound-var) => 888)) => 3
+  (:value-at-time-of-faking (fake (#'bound-var) => 888)) => 3
   (binding [rebound 88]
     (:value-at-time-of-faking (fake (rebound) => 3)) => 88))
+)
 
-
-;; Folded fakes
+;; Folded fakes
 
 (defmacro some-macro [& rest] )
 
@@ -343,7 +353,7 @@ odd?                   3               falsey)
   (provided
     (metaconstant-for-form '(h 1)) => '...h-1...)
   "Which means that already-existing substitutions are reused"
-  (augment-substitutions {'(h 1) ...h-1...} '(fake (f (h 1)))) => '{ (h 1) ...h-1... })
+  (augment-substitutions {'(h 1) ...h-1...} '(fake (#'f (h 1)))) => '{ (h 1) ...h-1... })
 
 (fact "fakes are flattened by making substitutions"
   (flatten-fake '(fake (f (g 1) 2 (h 3)) =test=> 33 ...overrides...)
@@ -352,27 +362,42 @@ odd?                   3               falsey)
 
 (fact "generated fakes maintain overrrides"
   (let [g-fake '(midje.semi-sweet/fake (g 1) midje.semi-sweet/=> ...g-1... ...overrides...)
-        h-fake '(midje.semi-sweet/fake (h 3) midje.semi-sweet/=> ...h-1... ...overrides...)]
-    (set (generate-fakes '{ (g 1) ...g-1..., (h 3) ...h-1... } '(...overrides...)))
+        h-fake '(midje.semi-sweet/fake (#'h 3) midje.semi-sweet/=> ...h-1... ...overrides...)]
+    (set (generate-fakes '{ (g 1) ...g-1..., (#'h 3) ...h-1... } '(...overrides...)))
     => #{g-fake h-fake}))
 
-
-;;; Internal functions
-
 (fact "data-fakes can be converted to metaconstant-bindings"
-  (let [bindings (data-fakes-to-metaconstant-bindings [{:lhs #'name :contained {:a 1}}])
-        [_var_ metaconstant] (only (only bindings))]
+  (let [bindings (binding-map [{:data-fake true :var #'name :contained {:a 1}}])
+        [_var_ metaconstant] (only bindings)]
     (.name metaconstant) => 'name
     (.storage metaconstant) => {:a 1} ))
 
 (declare var-for-merged var-for-irrelevant)
-(fact "metaconstant bindings can have their values merged together"
-  (let [first-half (Metaconstant. 'merged {:retained 1, :replaced 2})
-        second-half (Metaconstant. 'merged {:replaced 222, :extra 3})
-        irrelevant (Metaconstant. 'irrelevant {:retained :FOO :extra :BAR})
-        all [{#'var-for-merged first-half} {#'var-for-merged second-half} {#'var-for-irrelevant irrelevant}]
-        result (merge-metaconstant-bindings all)]
-    
-    (.storage (result #'var-for-merged)) => {:retained 1, :replaced 222, :extra 3}
-    (.storage (result #'var-for-irrelevant)) => {:retained :FOO, :extra :BAR}))
 
+(fact "metaconstant bindings can have their values merged together"
+  (let [first-half  {:data-fake true :var #'var-for-merged     :contained {:retained 1,   :replaced 2}}
+        second-half {:data-fake true :var #'var-for-merged     :contained {:replaced 222, :extra 3}}
+        irrelevant  {:data-fake true :var #'var-for-irrelevant :contained {:retained :FOO :extra :BAR}}
+        result (binding-map [first-half second-half irrelevant])]
+    (.storage (result #'midje.internal-ideas.t-fakes/var-for-merged))     => {:retained 1, :replaced 222, :extra 3}
+    (.storage (result #'midje.internal-ideas.t-fakes/var-for-irrelevant)) => {:retained :FOO, :extra :BAR}))
+
+(unfinished faked-fn)
+(facts "fake and datafake maps include form info, so tool creators can introspect them"
+  (fake (faked-fn 1 1) => 2 :key :value) => (contains {:call-form '(faked-fn 1 1)
+                                                       :arrow '=>
+                                                       :rhs (contains [2 :key :value] :gaps-ok)})
+
+  (data-fake ..d.. =contains=> {:key :value}) => (contains {:call-form '..d..
+                                                            :arrow '=contains=>
+                                                            :rhs (contains [{:key :value}])}))
+
+
+;;; DO NOT DELETE
+;;; These are used to test the use of vars to fake private functions
+;;; in another namespace.
+
+(defn- var-inc [x] (inc x))
+(defn- var-inc-user [x] (* x (var-inc x)))
+(defn- var-twice []
+  (var-inc (var-inc 2)))

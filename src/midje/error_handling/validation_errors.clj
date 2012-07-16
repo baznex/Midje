@@ -1,72 +1,55 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Code for identifying invalid Midje syntax. Includes control 
             flow macros, validation error creation, etc."}
   midje.error-handling.validation-errors
-  (:use
-    [clojure.algo.monads :only [defmonad domonad with-monad m-lift]]
-    [clojure.test :only [report]]
-    [midje.internal-ideas.file-position :only [form-position]]
-    [midje.util.form-utils :only [named?]]
-    [utilize.seq :only (find-first)]))
+  (:use [clojure.algo.monads :only [defmonad domonad]]
+        [clojure.test :only [report]]
+        [midje.internal-ideas.file-position :only [form-position]]
+        [midje.util.form-utils :only [named?]]))
                            
 
 ;; Making validation errors
 
-(defn- ^{:testable true } as-validation-error [form]
-  (vary-meta form assoc :midje-validation-error true))
+(defn- ^{:testable true} as-validation-error [form]
+  (vary-meta form assoc :midje/validation-error true))
 
 (defn validation-error-form? [form]
-  (:midje-validation-error (meta form)))
+  (:midje/validation-error (meta form)))
 
-(defn report-validation-error [form & notes]
+(defn validation-error-report-form [form & notes]
   (as-validation-error `(report {:type :validation-error
                                  :notes '~notes
                                  :position '~(form-position form)})))
 
-(defn simple-report-validation-error [form & notes]
-  (apply report-validation-error form (conj (vec notes) (pr-str form))))
+(defn simple-validation-error-report-form [form & notes]
+  (apply validation-error-report-form form (conj (vec notes) (pr-str form))))
 
 
-;; Special validation control flow macros
+;; Validation control flow macros
 
-(defmonad midje-maybe-m
-   "Monad describing form processing with possible failures. Failure
-   is represented by any form with metadata :midje-validation-error"
-   [m-result identity
-    m-bind   (fn [mv f] (if (validation-error-form? mv) mv (f mv)))
-    ])
+(defmonad validate-m
+  "Monad describing form processing with possible failures. Failure
+  is represented by any form with metadata :midje/validation-error"
+  [m-result identity
+   m-bind   (fn [form f] 
+              (if (validation-error-form? form) form (f form)))  ])
 
-(defmacro valid-let [let-vector & body]
-  `(domonad midje-maybe-m ~let-vector ~@body))
-
-(defn- ^{:testable true } spread-validation-error [collection]
-  (or (find-first validation-error-form? collection)
-      collection))
-
-;; This is a pretty dubious addition. Not using it now - found
-;; a better way - but might need it later.
-(defmacro with-valid [symbol & body]
-  `(let [~symbol (#'spread-validation-error ~symbol)]
-     (if (validation-error-form? ~symbol)
-       (eval ~symbol)
-       (do ~@body))))
-
-(defmacro when-valid [validatable-form-or-forms & body-to-execute-if-valid]
-  `(let [result# (validate ~validatable-form-or-forms)]
-     (if (validation-error-form? result#)
-       result#
-       (do ~@body-to-execute-if-valid))))
+(defmacro when-valid [validatable-form & body-to-execute-if-valid]
+  `(domonad validate-m [_# (validate ~validatable-form)]
+     ~@body-to-execute-if-valid))
 
 
 ;; Validate
 
-(defmulti validate (fn [form & options] 
+(defmulti validate (fn [form & _options_] 
                      (if (named? (first form)) 
                        (name (first form)) 
                        :validate-seq)))
 
-(defmethod validate :validate-seq [form & options] 
-  (spread-validation-error (map validate form)))
+(defmethod validate :validate-seq [seq-of-forms & _options_]
+  (let [first-validation-error (->> seq-of-forms 
+                                    (map validate) 
+                                    (filter validation-error-form?)
+                                    first)]
+    (or first-validation-error seq-of-forms)))
 
-(defmethod validate :default [form & options] (rest form))
+(defmethod validate :default [form & _options_] (rest form))

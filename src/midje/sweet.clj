@@ -1,5 +1,3 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "A TDD library for Clojure that supports top-down ('mockish') TDD, 
             encourages readable tests, provides a smooth migration path from 
             clojure.test, balances abstraction and concreteness, and strives for 
@@ -11,21 +9,24 @@
         midje.error-handling.exceptions
         midje.error-handling.validation-errors
         midje.util.debugging
-        [midje.util.form-utils :only [macro-for]]
+        [midje.util.form-utils :only [macro-for pop-docstring]]
         [midje.internal-ideas.wrapping :only [put-wrappers-into-effect]]
-        [midje.internal-ideas.fact-context :only [nested-fact-description]]
+        [midje.internal-ideas.fact-context :only [nested-descriptions]]
         [midje.internal-ideas.file-position :only [set-fallback-line-number-from]]
         [midje.ideas.tabular :only [tabular*]]
         [midje.ideas.facts :only [complete-fact-transformation future-fact* midjcoexpand 
-                                  future-fact-variant-names]])
+                                  future-fact-variant-names]]
+        [midje.ideas.formulas :only [future-formula-variant-names]]
+        [clojure.algo.monads :only [domonad]])
   (:require [midje.ideas.background :as background]
+            [midje.ideas.formulas :as formulas]
             midje.checkers
-            [midje.internal-ideas.report :as report]))
+            [midje.ideas.reporting.report :as report]))
 
 (immigrate 'midje.unprocessed)
 (immigrate 'midje.semi-sweet)
 
-;; Following is required because `intern` doesn't transfer "dynamicity".
+;; Following two are required because `intern` doesn't transfer "dynamicity".
 (def ^{:doc "True by default.  If set to false, Midje checks are not
              included into production code, whether compiled or loaded."
        :dynamic true}
@@ -39,17 +40,10 @@
        :dynamic true}
   *cljs-file-under-test* *cljs-file-under-test*)
 
-(intern+keep-meta *ns* 'before #'background/before)
-(intern+keep-meta *ns* 'after #'background/after)
-(intern+keep-meta *ns* 'around #'background/around)
-
-(defmacro expose-testables
-  "Enables testing of vars in the target ns which have ^:testable metadata"
-  [target-ns]
-  (macro-for [testable-sym (for [[sym var] (ns-interns target-ns)
-                                 :when (:testable (meta var))]
-                              sym) ]
-    `(def ~testable-sym (intern '~target-ns '~testable-sym))))
+(intern+keep-meta *ns* 'before  #'background/before)
+(intern+keep-meta *ns* 'after   #'background/after)
+(intern+keep-meta *ns* 'around  #'background/around)
+(intern+keep-meta *ns* 'formula #'formulas/formula)
 
 (defmacro background 
   "Runs facts against setup code which is run before, around, or after 
@@ -91,23 +85,22 @@
   metaconstants, checkers, arrows and specifying call counts"
   [& forms]
   (when (user-desires-checking?)
-    (when-valid &form
-      (let [description (when (string? (first forms)) (first forms))]
-        (try
-          (set-fallback-line-number-from &form)
-          (let [[background remainder] (background/separate-background-forms forms)]
-            (if (seq background)
-              `(against-background ~background (midje.sweet/fact ~@remainder))        	
-              (complete-fact-transformation description remainder)))
-          (catch Exception ex
-            `(do
-               (midje.internal-ideas.fact-context/within-fact-context ~description
-                 (clojure.test/report {:type :exceptional-user-error
-                                       :description (midje.internal-ideas.fact-context/nested-fact-description)
-                                       :macro-form '~&form
-                                       :stacktrace '~(user-error-exception-lines ex)
-                                       :position (midje.internal-ideas.file-position/line-number-known ~(:line (meta &form)))}))
-               false)))))))
+    (domonad validate-m [[description forms] (validate &form)]
+      (try
+        (set-fallback-line-number-from &form)
+        (let [[background remainder] (background/separate-background-forms forms)]
+          (if (seq background)
+            `(against-background ~background (midje.sweet/fact ~@remainder))        	
+            (complete-fact-transformation description remainder)))
+        (catch Exception ex
+          `(do
+             (midje.internal-ideas.fact-context/within-fact-context ~description
+               (clojure.test/report {:type :exceptional-user-error
+                                     :description @midje.internal-ideas.fact-context/nested-descriptions
+                                     :macro-form '~&form
+                                     :stacktrace '~(user-error-exception-lines ex)
+                                     :position (midje.internal-ideas.file-position/line-number-known ~(:line (meta &form)))}))
+             false))))))
 
 (defmacro facts 
   "Alias for fact."
@@ -120,14 +113,23 @@
   (macro-for [name future-fact-variant-names]
     `(defmacro ~(symbol name)
        "Fact that will not be run. Generates 'WORK TO DO' report output as a reminder."
-       {:arglists '([& ~'forms])}
+       {:arglists '([& forms])}
+       [& forms#]
+       (future-fact* ~'&form))))
+
+(defmacro ^{:private true} generate-future-formula-variants []
+  (macro-for [name future-formula-variant-names]
+    `(defmacro ~(symbol name)
+       "ALPHA/EXPERIMENTAL (subject to change)
+        Formula that will not be run. Generates 'WORK TO DO' report output as a reminder."
+       {:arglists '([& forms])}
        [& forms#]
        (future-fact* ~'&form))))
 
 (generate-future-fact-variants)
+(generate-future-formula-variants)
 
-(defmacro
-  tabular 
+(defmacro tabular 
   "Generate a table of related facts.
   
    Ex. (tabular \"table of simple math\" 
@@ -140,3 +142,18 @@
   {:arglists '([doc-string? fact table])}
   [& _]
   (tabular* (keys &env) &form))
+
+
+(defmacro metaconstants
+  "For a few operations, such as printing and equality checking,
+   the Clojure AOT-compiler becomes confused by Midje's auto-generation
+   of metaconstants. If AOT-compiled tests fail when on-the-fly
+   compiled tests failed, declare your metaconstants before use.
+   Example:
+     (metaconstants ..m.. ..m.... .mc.)"
+  [& names]
+  (let [defs (map (fn [name]
+                    `(def ~name (midje.ideas.metaconstants.Metaconstant. '~name {})))
+                  names)]
+    `(do ~@defs)))
+

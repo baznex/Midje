@@ -1,8 +1,10 @@
 Available via [clojars](http://clojars.org/search?q=midje)   
-Current stable version: [midje "1.3.1"]    
-Development version: [midje "1.3.2-SNAPSHOT"]
+Current stable version: [midje "1.4.0"] [Changes from 1.3](https://github.com/marick/Midje/wiki/New-in-1.4)    
+Development version: [midje "1.5.0-SNAPSHOT"]  
 
-[User guide](https://github.com/marick/Midje/wiki)
+
+[User guide](https://github.com/marick/Midje/wiki)    
+[Tutorial](https://github.com/marick/Midje-quickstart/wiki)
 
 About Midje
 =======================
@@ -46,30 +48,15 @@ that are more useful for testing than `odd?` is.
 Learning Midje
 =======================
 
+There is a [tutorial introduction](https://github.com/marick/Midje-quickstart/wiki).
 Midje's features are described in the **[user
 guide](https://github.com/marick/Midje/wiki)**. If
 anything there is unclear, ask in the [mailing
-list](http://groups.google.com/group/midje).
+list](http://groups.google.com/group/midje) or in the #midje
+channel on freenode.
 If you like videos of people programming, here's an
 [8-minute infomercial](http://www.youtube.com/watch?v=a7YtkcIiLGI) that concentrates on transitioning from
 clojure.test. 
-If
-you like looking straight at code, [this heavily annotated
-example](http://github.com/marick/Midje/blob/master/examples/basic/test/basic/core_test.clj)
-  has a bunch. If you want to run that example, you
-  can download it:
-
-1.   [Click here](http://github.com/marick/Midje/raw/master/downloads/examples.zip).
-2.   In a shell, go to the directory your browser unpacked the example into. It should be named `examples`.
-3.   Go to `examples/basic/`.
-4.   Type "./run" or "lein test".
-5.   The facts in `test/*/core_test.clj` will be checked.
-
-You can [download
-everything](http://github.com/marick/Midje/downloads) to get
-more examples.
-
-Or in the #midje channel on freenode!
 
 Contributors
 ==============
@@ -77,9 +64,11 @@ Contributors
 * Alex Baranosky
 * Phillip Calçado
 * Stuart Halloway
+* Wilkes Joiner
 * Ben Mabey
 * Alan Malloy
 * Brian Marick
 * Bob Martin
+* Dmitri Naumov
 * Sébastien RoccaSerra
-* Wilkes Joiner
+* Greg Spurrier

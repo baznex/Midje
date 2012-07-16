@@ -1,9 +1,7 @@
-;; -*- indent-tabs-mode: nil -*-
-
 (ns ^{:doc "Functions to help in finding the lines you care about."}
   midje.internal-ideas.file-position
   (:use [midje.util.zip :only [skip-to-rightmost-leaf]]
-        [midje.util.form-utils :only [translate-zipper]]
+        [midje.util.form-utils :only [quoted? translate-zipper]]
         [midje.util.namespace :only [matches-symbols-in-semi-sweet-or-sweet-ns?]]
         [midje.ideas.arrows :only [all-arrows at-arrow__add-key-value-to-end__no-movement]])
   (:require [clojure.zip :as zip]))
@@ -29,8 +27,9 @@
       (reset! fallback-line-number raw-lineno)
       (swap! fallback-line-number inc))))
 
-(defn arrow-line-number-from-form [form]
+(defn arrow-line-number-from-form
   "Form is of the form [ <function-call> => .* ]"
+  [form]
   (-> form zip/seq-zip zip/down zip/right arrow-line-number))
 
 (defn form-position [form]
@@ -88,6 +87,9 @@
 
 (defn annotate-embedded-arrows-with-line-numbers [form]
   (translate-zipper form
+    quoted?
+    skip-to-rightmost-leaf
+  
     (fn [loc] (matches-symbols-in-semi-sweet-or-sweet-ns? all-arrows loc))
     (fn [loc] (at-arrow__add-line-number-to-end__no-movement (arrow-line-number loc) loc))))
 

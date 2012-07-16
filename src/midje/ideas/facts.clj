@@ -1,7 +1,7 @@
 (ns ^{:doc "Facts are the core abstraction of Midje."}
   midje.ideas.facts
-  (:use [midje.error-handling.validation-errors :only [simple-report-validation-error validate]]
-        [midje.util.namespace :only [is-semi-sweet-keyword?]]
+  (:use [midje.error-handling.validation-errors :only [simple-validation-error-report-form validate when-valid]]
+        [midje.util.namespace :only [semi-sweet-keyword?]]
         [midje.internal-ideas.fakes :only [unfold-fakes]]
 
         [midje.internal-ideas.expect :only [expect?
@@ -13,46 +13,46 @@
                                               with-additional-wrappers
                                               forms-to-wrap-around]]
         [midje.util.debugging :only [nopret]]
-        [midje.ideas.prerequisites :only [is-head-of-form-providing-prerequisites?
+        [midje.ideas.prerequisites :only [head-of-form-providing-prerequisites?
                                           insert-prerequisites-into-expect-form-as-fakes]]
-        [midje.ideas.arrows :only [is-start-of-checking-arrow-sequence? expect-arrows]]
+        [midje.ideas.arrows :only [start-of-checking-arrow-sequence? leaves-contain-arrow?]]
         [midje.ideas.background :only [surround-with-background-fakes
                                        body-of-against-background
                                        against-background-contents-wrappers
-                                       against-background-children-wrappers
+                                       against-background-facts-and-checks-wrappers
                                        against-background?]]
         [midje.ideas.metaconstants :only [define-metaconstants]] 
-        [midje.util.form-utils :only [first-named? translate-zipper preserve-type quoted? 
-                                      pred-cond reader-line-number named?]]
+        [midje.util.form-utils :only [def-many-methods first-named? translate-zipper pop-docstring 
+                                      preserve-type quoted? pred-cond reader-line-number named?]]
         [midje.util.laziness :only [eagerly]]
         [midje.util.zip :only [skip-to-rightmost-leaf]]
-        [midje.error-handling.validation-errors :only [when-valid]])
+        [swiss-arrows.core :only [-<>]])
   (:require [clojure.zip :as zip])
-  (:require [midje.internal-ideas.report :as report]))
+  (:require [midje.ideas.reporting.report :as report]))
 (declare midjcoexpand)
 
 (defn fact? [form]
   (or (first-named? form "fact")
       (first-named? form "facts")))
 
-(def future-fact-variant-names [ "future-fact" 
-                                 "future-facts" 
-                                 "pending-fact" 
-                                 "pending-facts" 
-                                 "incipient-fact" 
-                                 "incipient-facts" 
-                                 "antiterminologicaldisintactitudinarian-fact"
-                                 "antiterminologicaldisintactitudinarian-facts" ])
+(def future-prefixes ["future-" 
+                      "pending-" 
+                      "incipient-" 
+                      "antiterminologicaldisintactitudinarian-"])
+
+(def future-fact-variant-names (for [prefix future-prefixes
+                                     fact-or-facts ["fact" "facts"]]
+                                 (str prefix fact-or-facts)))
 
 (defn future-fact? [form]
   (some (partial first-named? form) future-fact-variant-names ))
 
-(defn future-fact* [[_name_ doc-string? & _rest_ :as forms]]
+(defn future-fact* [[_name_ & args :as forms]]
   (let [lineno (reader-line-number forms)
-        description (when (string? doc-string?) doc-string?)]
+        [description _] (pop-docstring args)]
     `(within-fact-context ~description 
        (clojure.test/report {:type :future-fact
-                             :description (midje.internal-ideas.fact-context/nested-fact-description)
+                             :description @midje.internal-ideas.fact-context/nested-descriptions
                              :position (midje.internal-ideas.file-position/line-number-known ~lineno)}))))
 
 (defn to-semi-sweet
@@ -61,35 +61,35 @@
    2) (provided ...) become fakes inserted into preceding expect."
   [multi-form]
   (translate-zipper multi-form
-    is-start-of-checking-arrow-sequence?
+    start-of-checking-arrow-sequence?
     wrap-with-expect__then__at-rightmost-expect-leaf
     
-    is-head-of-form-providing-prerequisites?
+    head-of-form-providing-prerequisites?
     insert-prerequisites-into-expect-form-as-fakes
 
-    is-semi-sweet-keyword?
+    semi-sweet-keyword?
     skip-to-rightmost-leaf))
 
-(letfn [(expand-against-background [form wrappers]
-          (with-additional-wrappers wrappers (midjcoexpand form)))]
+(defn midjcoexpand
+  "Descend form, macroexpanding *only* midje forms and placing background wrappers where appropriate."
+  [form]
+  (pred-cond form
+    already-wrapped?     form
+    quoted?              form
+    future-fact?         (macroexpand form)
+    against-background?  (when-valid form
+                             (-<> form 
+                                  body-of-against-background
+                                  midjcoexpand
+                                  (with-additional-wrappers (against-background-facts-and-checks-wrappers form) <>)
+                                  (multiwrap <> (against-background-contents-wrappers form))))
   
-  (defn midjcoexpand
-    "Descend form, macroexpanding *only* midje forms and placing background wrappers where appropriate."
-    [form]
-    (pred-cond form
-      already-wrapped?     form
-      quoted?              form
-      future-fact?         (macroexpand form)
-      against-background?  (when-valid form
-                               (-> (body-of-against-background form) 
-                                   (expand-against-background (against-background-children-wrappers form))
-                                   (multiwrap (against-background-contents-wrappers form))))
-    
-      expect?      (multiwrap form (forms-to-wrap-around :checks ))
-      fact?        (multiwrap (midjcoexpand (macroexpand form)) 
-                              (forms-to-wrap-around :facts ))
-      sequential?  (preserve-type form (eagerly (map midjcoexpand form)))
-      :else        form)))
+    expect?      (multiwrap form (forms-to-wrap-around :checks ))
+    fact?        (-<> form
+                      macroexpand
+                      (multiwrap <> (forms-to-wrap-around :facts)))
+    sequential?  (preserve-type form (eagerly (map midjcoexpand form)))
+    :else        form)) 
 
 (defn complete-fact-transformation [description forms]
   (let [form-to-run (-> forms
@@ -102,16 +102,9 @@
     (define-metaconstants form-to-run)
     (report/form-providing-friendly-return-value 
       `(within-fact-context ~description ~form-to-run))))
-
-(letfn [(validate-fact [[fact & _ :as form]]
-          (let [named-form-leaves (map name (filter named? (flatten (rest form))))]
-            (if (not-any? expect-arrows named-form-leaves)
-              (simple-report-validation-error form
-                (format "There is no arrow in your %s form:" (name fact)))
-              (rest form))))]
   
-  (defmethod validate "fact" [form] 
-    (validate-fact form))
-  
-  (defmethod validate "facts" [form]
-    (validate-fact form)))
+(def-many-methods validate ["fact" "facts"] [[fact-or-facts & args :as form]]
+  (if-not (leaves-contain-arrow? (rest form))
+    (simple-validation-error-report-form form
+      (format "There is no arrow in your %s form:" (name fact-or-facts)))
+    (pop-docstring args)))
